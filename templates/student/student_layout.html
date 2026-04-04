@@ -66,6 +66,12 @@
                     </svg>
                     Complaints
                 </a>
+                <a id="bucket-nav-link" href="/student/bucket" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/bucket' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7h-9m9 5h-9m9 5h-9M4 7h.01M4 12h.01M4 17h.01" />
+                    </svg>
+                    Bucket
+                </a>
                 <a href="/student/lost-found" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/lost-found' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
@@ -185,7 +191,7 @@ function showStudentToast(message, type) {
     async function check() {
         try {
             const [annRes, notifRes] = await Promise.all([
-                fetch('/api/announcements'),
+                fetch('/api/announcements?studentId=' + encodeURIComponent(sid)),
                 fetch('/api/notifications?studentId=' + encodeURIComponent(sid))
             ]);
 
@@ -195,7 +201,11 @@ function showStudentToast(message, type) {
                 const savedAnn = localStorage.getItem(annKey);
                 if (latestAnn) {
                     if (savedAnn !== null && Number(latestAnn) > Number(savedAnn)) {
-                        showStudentToast('You have a new announcement.', 'info');
+                        const latest = anns[0] || {};
+                        const toastMessage = latest.audience === 'student'
+                            ? 'You received a personal message from staff.'
+                            : 'You have a new announcement.';
+                        showStudentToast(toastMessage, latest.audience === 'student' ? 'warn' : 'info');
                     }
                     localStorage.setItem(annKey, String(latestAnn));
                 }
@@ -261,6 +271,25 @@ function showStudentToast(message, type) {
 
     verifyBoot();
     setInterval(verifyBoot, 10000);
+})();
+
+(async function updateBucketHint() {
+    const sid = localStorage.getItem('studentId');
+    const link = document.getElementById('bucket-nav-link');
+    if (!sid || !link) return;
+    try {
+        const res = await fetch('/api/bucket/eligibility?studentId=' + encodeURIComponent(sid));
+        if (!res.ok) return;
+        const payload = await res.json();
+        const enabled = !!payload.eligible || !!payload.hasIncomingRequests;
+        if (enabled) {
+            link.title = payload.eligible ? 'Bucket requests' : 'You have incoming bucket requests';
+        } else {
+            link.title = 'Locked: unlocks after 4 bookings (' + (payload.bookingCount || 0) + '/4 used)';
+        }
+    } catch (e) {
+        console.error(e);
+    }
 })();
 </script>
 {% endblock %}

@@ -10,9 +10,23 @@
     <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
         <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
             <h2 class="text-lg font-semibold text-gray-900">Send Announcement</h2>
-            <p class="text-sm text-gray-500 mt-1">Write a short update for all students.</p>
+            <p class="text-sm text-gray-500 mt-1">Write a short update for everyone or send a personal message to one eligible student.</p>
 
             <form id="announcement-form" class="mt-6 space-y-4">
+                <div>
+                    <label for="announcement-audience" class="block text-sm font-medium text-gray-700">Audience</label>
+                    <select id="announcement-audience" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm">
+                        <option value="all">Everyone</option>
+                        <option value="student">Single Student</option>
+                    </select>
+                </div>
+
+                <div id="target-student-wrap" class="hidden">
+                    <label for="target-student-id" class="block text-sm font-medium text-gray-700">Eligible Student</label>
+                    <select id="target-student-id" class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm"></select>
+                    <p class="mt-1 text-xs text-gray-500">Only students in submitted, washing, or ready status can receive personal messages.</p>
+                </div>
+
                 <div>
                     <label for="announcement-title" class="block text-sm font-medium text-gray-700">Title</label>
                     <input id="announcement-title" type="text" maxlength="120" required class="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm" placeholder="Laundry collection delayed">
@@ -75,6 +89,10 @@
                         <div>
                             <h3 class="text-sm font-semibold text-gray-900">${announcement.title}</h3>
                             <p class="text-xs text-gray-400 mt-1 whitespace-nowrap">${fmtTs(announcement.createdAt || announcement.created_at)}</p>
+                            <div class="mt-2 flex flex-wrap gap-2">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${announcement.audience === 'student' ? 'bg-amber-100 text-amber-800' : 'bg-blue-100 text-blue-800'}">${announcement.audience === 'student' ? 'Personal' : 'Everyone'}</span>
+                                ${(announcement.isUrgent || announcement.is_urgent) ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-rose-100 text-rose-700">Urgent</span>' : ''}
+                            </div>
                         </div>
                         <button
                             type="button"
@@ -85,6 +103,7 @@
                         </button>
                     </div>
                     <p class="mt-2 text-sm text-gray-600 whitespace-pre-line">${announcement.message}</p>
+                    ${announcement.targetStudentId ? `<p class="mt-2 text-xs text-gray-500">Student ID: ${announcement.targetStudentId}</p>` : ''}
                 </div>
             `).join('');
 
@@ -117,12 +136,41 @@
         }
     }
 
+    async function loadEligibleStudents() {
+        const select = document.getElementById('target-student-id');
+        try {
+            const res = await fetch('/api/announcements/eligible-students');
+            const rows = res.ok ? await res.json() : [];
+            if (!rows.length) {
+                select.innerHTML = '<option value="">No eligible students right now</option>';
+                return;
+            }
+            select.innerHTML = rows.map((student) => {
+                const statusMap = { collected: 'Submitted', washing: 'Washing', washed: 'Ready' };
+                return `<option value="${student.id}">${student.name} (${student.regNo}) - ${statusMap[student.status] || student.status}</option>`;
+            }).join('');
+        } catch (error) {
+            console.error(error);
+            select.innerHTML = '<option value="">Could not load eligible students</option>';
+        }
+    }
+
+    const audienceSelect = document.getElementById('announcement-audience');
+    const targetWrap = document.getElementById('target-student-wrap');
+    audienceSelect.addEventListener('change', () => {
+        const isStudent = audienceSelect.value === 'student';
+        targetWrap.classList.toggle('hidden', !isStudent);
+        if (isStudent) loadEligibleStudents();
+    });
+
     document.getElementById('announcement-form').addEventListener('submit', async (event) => {
         event.preventDefault();
 
         const titleInput = document.getElementById('announcement-title');
         const messageInput = document.getElementById('announcement-message');
+        const targetStudentInput = document.getElementById('target-student-id');
         const status = document.getElementById('announcement-status');
+        const audience = audienceSelect.value;
 
         status.textContent = 'Sending...';
 
@@ -132,7 +180,9 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title: titleInput.value,
-                    message: messageInput.value
+                    message: messageInput.value,
+                    audience,
+                    targetStudentId: audience === 'student' ? targetStudentInput.value : null
                 })
             });
 
@@ -145,6 +195,9 @@
 
             titleInput.value = '';
             messageInput.value = '';
+            if (audience === 'student') {
+                loadEligibleStudents();
+            }
             status.textContent = 'Announcement sent successfully.';
             status.className = 'text-sm text-green-600';
             loadAnnouncements();
@@ -158,5 +211,6 @@
     document.getElementById('refresh-announcements').addEventListener('click', loadAnnouncements);
 
     loadAnnouncements();
+    loadEligibleStudents();
 </script>
 {% endblock %}

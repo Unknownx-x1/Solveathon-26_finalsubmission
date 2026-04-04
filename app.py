@@ -1,18 +1,20 @@
-from flask import Flask, request, jsonify, render_template, make_response, send_from_directory
+from flask import Flask, request, jsonify, render_template, make_response, send_from_directory, session, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
-from models import db, ma, Student, LaundryBatch, RoomSchedule, SystemSettings, StudentInvite, Notification, Announcement, Complaint, DailyLaundryDetail, LaundryRecord, LostFoundItem, StudentSchema, LaundryBatchSchema, RoomScheduleSchema, SystemSettingsSchema, StudentInviteSchema, NotificationSchema, DailyLaundryDetailSchema, AnnouncementSchema, ComplaintSchema, LaundryRecordSchema, LostFoundItemSchema
+from models import db, ma, Student, LaundryBatch, RoomSchedule, SystemSettings, StaffUser, StudentInvite, Notification, Announcement, Complaint, DailyLaundryDetail, LaundryRecord, LostFoundItem, BucketRequest, BucketRequestRecipient, StudentSchema, LaundryBatchSchema, RoomScheduleSchema, SystemSettingsSchema, StudentInviteSchema, NotificationSchema, DailyLaundryDetailSchema, AnnouncementSchema, ComplaintSchema, LaundryRecordSchema, LostFoundItemSchema, BucketRequestSchema, BucketRequestRecipientSchema
 from schedule_ocr import process_schedule_image, process_schedule_pdf
 from token_ocr import allowed_image, cleanup_file, extract_token_number, save_temp_upload
 from lost_and_found import delete_image_if_exists, mark_lost_item_found, save_lost_found_image
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import os
 import random
 from marshmallow import ValidationError
-from sqlalchemy import func, inspect, text
+from sqlalchemy import func, inspect, text, or_, and_
 import re
+from functools import wraps
 from dotenv import load_dotenv
+from werkzeug.security import generate_password_hash, check_password_hash
 
 load_dotenv()
 
@@ -73,6 +75,10 @@ laundry_record_schema = LaundryRecordSchema()
 laundry_records_schema = LaundryRecordSchema(many=True)
 lost_found_item_schema = LostFoundItemSchema()
 lost_found_items_schema = LostFoundItemSchema(many=True)
+bucket_request_schema = BucketRequestSchema()
+bucket_requests_schema = BucketRequestSchema(many=True)
+bucket_request_recipient_schema = BucketRequestRecipientSchema()
+bucket_request_recipients_schema = BucketRequestRecipientSchema(many=True)
 
 def _ensure_sqlite_column(table_name, column_name, column_sql):
     inspector = inspect(db.engine)
@@ -99,6 +105,21 @@ def _run_lightweight_migrations():
         _ensure_sqlite_column('laundry_records', 'phone_number', 'VARCHAR')
     if 'lost_found_items' in table_names:
         _ensure_sqlite_column('lost_found_items', 'archived_at', 'DATETIME')
+    if 'announcements' in table_names:
+        _ensure_sqlite_column('announcements', 'audience', "VARCHAR NOT NULL DEFAULT 'all'")
+        _ensure_sqlite_column('announcements', 'target_student_id', 'INTEGER')
+        _ensure_sqlite_column('announcements', 'category', "VARCHAR NOT NULL DEFAULT 'general'")
+        _ensure_sqlite_column('announcements', 'is_urgent', 'BOOLEAN NOT NULL DEFAULT 0')
+
+def _ensure_default_staff_user():
+    if StaffUser.query.filter(func.lower(StaffUser.username) == 'test').first():
+        return
+    db.session.add(
+        StaffUser(
+            username='Test',
+            password_hash=generate_password_hash('1234')
+        )
+    )
 
 # Create database tables
 with app.app_context():
@@ -108,14 +129,19 @@ with app.app_context():
     # Initialize settings if not exists
     if not SystemSettings.query.first():
         db.session.add(SystemSettings(edit_window_open=False))
+    _ensure_default_staff_user()
     if db.session.new:
         db.session.commit()
 
-VALID_STATUSES = ["booked", "pending", "collected", "washing", "washed", "pickedUp"]
+VALID_STATUSES = ["booked", "pending", "collected", "washing", "washed", "pickedUp", "cancelled"]
 LAUNDRY_RECORD_STATUSES = {"received", "washing", "ready", "delivered"}
 LOST_FOUND_STATUSES = {"tracked", "lost", "found"}
 LOST_FOUND_CREATORS = {"student", "staff"}
-UPLOADS_DIR = os.environ.get('UPLOADS_ROOT', os.path.join(basedir, 'static', 'uploads'))
+UPLOADS_DIR = (
+    os.environ.get('UPLOADS_ROOT')
+    or os.environ.get('RAILWAY_VOLUME_MOUNT_PATH')
+    or os.path.join(basedir, 'static', 'uploads')
+)
 OCR_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'ocr')
 LOST_FOUND_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'lost_found')
 
@@ -171,10 +197,184 @@ AVAILABLE_SLOTS = [
     "10:00 - 11:00",
     "11:00 - 12:00",
     "12:00 - 13:00",
-    "13:00 - 14:00"
+    "13:00 - 14:00",
+    "18:00 - 19:00",
+    "19:00 - 20:00"
 ]
 MAX_PER_SLOT = 25
 MONTHLY_SLOT_LIMIT = 4
+MISSED_SLOT_LOOKAHEAD_DAYS = 21
+PERSONAL_ANNOUNCEMENT_ELIGIBLE_STATUSES = {'collected', 'washing', 'washed'}
+
+def _is_staff_logged_in():
+    return bool(session.get('staff_user_id'))
+
+def _staff_login_required(view):
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if not _is_staff_logged_in():
+            return redirect(url_for('staff_login', next=request.path))
+        return view(*args, **kwargs)
+    return wrapped
+
+def _latest_batch_for_student(student_id):
+    if not student_id:
+        return None
+    return LaundryBatch.query.filter_by(student_id=student_id).order_by(LaundryBatch.created_at.desc()).first()
+
+def _student_eligible_for_personal_announcement(student_id):
+    latest_batch = _latest_batch_for_student(student_id)
+    return bool(latest_batch and latest_batch.status in PERSONAL_ANNOUNCEMENT_ELIGIBLE_STATUSES)
+
+def _announcement_payload_for_student_query(student_id=None):
+    query = Announcement.query
+    if student_id is not None:
+        query = query.filter(
+            or_(
+                Announcement.audience == 'all',
+                and_(
+                    Announcement.audience == 'student',
+                    Announcement.target_student_id == student_id
+                )
+            )
+        )
+    return query.order_by(Announcement.created_at.desc())
+
+def _create_announcement_record(title, message, audience='all', target_student_id=None, category='general', is_urgent=False):
+    announcement = Announcement(
+        title=title,
+        message=message,
+        audience=audience,
+        target_student_id=target_student_id,
+        category=category,
+        is_urgent=is_urgent
+    )
+    db.session.add(announcement)
+    return announcement
+
+def _create_slot_added_announcement(batch, previous_date, previous_slot):
+    if not batch or not batch.scheduled_date or not batch.time_slot:
+        return None
+    title = "Urgent Slot Added"
+    message = (
+        f"An overflow laundry slot was added on {batch.scheduled_date} at {batch.time_slot} "
+        f"after a missed submission from {previous_date} {previous_slot}."
+    )
+    existing = Announcement.query.filter_by(
+        category='slot_added',
+        title=title,
+        message=message
+    ).first()
+    if existing:
+        return existing
+    return _create_announcement_record(
+        title=title,
+        message=message,
+        audience='all',
+        category='slot_added',
+        is_urgent=True
+    )
+
+def _count_bookings_for_slot(date_value, time_slot):
+    return LaundryBatch.query.filter_by(scheduled_date=date_value, time_slot=time_slot).count()
+
+def _find_best_reassignment_slot():
+    start_date = datetime.now().date()
+    best_choice = None
+    for offset in range(2, MISSED_SLOT_LOOKAHEAD_DAYS + 2):
+        candidate_date = start_date.fromordinal(start_date.toordinal() + offset)
+        date_value = candidate_date.strftime('%Y-%m-%d')
+        for slot in AVAILABLE_SLOTS:
+            booking_count = _count_bookings_for_slot(date_value, slot)
+            remaining = MAX_PER_SLOT - booking_count
+            score = (remaining, -offset, -AVAILABLE_SLOTS.index(slot))
+            if best_choice is None or score > best_choice['score']:
+                best_choice = {
+                    'date': date_value,
+                    'slot': slot,
+                    'remaining': remaining,
+                    'score': score,
+                }
+    return best_choice
+
+def _slot_end_datetime(batch):
+    if not batch or not batch.scheduled_date or not batch.time_slot:
+        return None
+    try:
+        end_part = str(batch.time_slot).split('-')[-1].strip()
+        return datetime.strptime(f"{batch.scheduled_date} {end_part}", '%Y-%m-%d %H:%M')
+    except Exception:
+        return None
+
+def _cancel_legacy_auto_reassigned_bookings():
+    changed = False
+    legacy_batches = LaundryBatch.query.filter_by(status='booked').all()
+    for batch in legacy_batches:
+        notes = str(batch.notes or '')
+        if 'Auto-reassigned after missed slot' not in notes:
+            continue
+        batch.status = 'cancelled'
+        suffix = "Automatic reassignment removed. Please create a new booking manually."
+        if suffix not in notes:
+            batch.notes = (notes.strip() + ' | ' if notes.strip() else '') + suffix
+        _create_notification(batch.student_id, batch.id, 'cancelled')
+        changed = True
+    return changed
+
+def _process_missed_bookings():
+    now = datetime.now()
+    changed = _cancel_legacy_auto_reassigned_bookings()
+    booked_batches = LaundryBatch.query.filter_by(status='booked').all()
+    for batch in booked_batches:
+        slot_end = _slot_end_datetime(batch)
+        if not slot_end or slot_end >= now:
+            continue
+        previous_date = batch.scheduled_date
+        previous_slot = batch.time_slot
+        batch.status = 'cancelled'
+        note = f"Missed slot on {previous_date} {previous_slot}. Booking cancelled."
+        batch.notes = ((batch.notes or '').strip() + ' | ' if (batch.notes or '').strip() else '') + note
+        _create_notification(batch.student_id, batch.id, 'cancelled')
+        changed = True
+    if changed:
+        db.session.commit()
+    return changed
+
+def _booking_spacing_conflict(student_id, date_val):
+    return None
+
+def _student_booking_count_current_month(student_id):
+    now = datetime.now()
+    month_prefix = now.strftime('%Y-%m')
+    return LaundryBatch.query.filter(
+        LaundryBatch.student_id == student_id,
+        LaundryBatch.scheduled_date.like(f"{month_prefix}-%")
+    ).count()
+
+def _student_has_bucket_access(student_id):
+    return _student_booking_count_current_month(student_id) >= MONTHLY_SLOT_LIMIT
+
+def _students_with_slots_next_7_days():
+    today = datetime.now().date()
+    end_date = today + timedelta(days=7)
+    students = Student.query.join(LaundryBatch, LaundryBatch.student_id == Student.id).filter(
+        LaundryBatch.status == 'booked'
+    ).all()
+    eligible = []
+    seen = set()
+    for s in students:
+        for b in s.batches:
+            if b.status != 'booked' or not b.scheduled_date:
+                continue
+            try:
+                d = datetime.strptime(b.scheduled_date, '%Y-%m-%d').date()
+            except Exception:
+                continue
+            if today < d <= end_date and s.id not in seen:
+                seen.add(s.id)
+                eligible.append(s)
+                break
+    return eligible
 
 def _create_notification(student_id, batch_id, status):
     messages = {
@@ -183,7 +383,8 @@ def _create_notification(student_id, batch_id, status):
         "collected": "Your laundry has been submitted.",
         "washing": "Your laundry is being washed.",
         "washed": "Your laundry has been washed and is ready for pickup.",
-        "pickedUp": "Your laundry has been picked up. Thank you!"
+        "pickedUp": "Your laundry has been picked up. Thank you!",
+        "cancelled": "Your booking was cancelled because the laundry date was missed."
     }
     message = messages.get(status)
     if not message:
@@ -262,6 +463,7 @@ def _update_laundry_record_status(token, status):
         batch.washed_at = now
     elif next_status == "pickedUp":
         batch.picked_up_at = now
+        _detach_token_from_batch_student(batch)
 
     db.session.commit()
 
@@ -384,6 +586,7 @@ def _map_batch_status_to_laundry_status(batch_status):
         'washing': 'washing',
         'washed': 'ready',
         'pickedUp': 'delivered',
+        'cancelled': 'cancelled',
     }
     return mapping.get((batch_status or '').strip(), 'received')
 
@@ -431,7 +634,7 @@ def _get_student_loss_eligible_batch(student_id):
 def _get_active_batch_for_student(student_id):
     return LaundryBatch.query.filter(
         LaundryBatch.student_id == student_id,
-        LaundryBatch.status != 'pickedUp'
+        LaundryBatch.status.notin_(['pickedUp', 'cancelled'])
     ).order_by(LaundryBatch.created_at.desc()).first()
 
 def _can_generate_token_for_batch(batch):
@@ -453,6 +656,15 @@ def _build_archived_batch_token(batch):
     timestamp = datetime.now().strftime('%Y%m%d%H%M%S%f')
     return f"{token_text}-archived-{batch.id}-{timestamp}"
 
+def _detach_token_from_batch_student(batch):
+    if not batch:
+        return
+    original_token = str(batch.token or '').strip()
+    if batch.student and original_token and str(batch.student.token or '').strip() == original_token:
+        batch.student.token = None
+    if batch.status == 'pickedUp' and original_token:
+        batch.token = _build_archived_batch_token(batch)
+
 def _resolve_batch_token_conflict(student, token, active_batch=None):
     existing_batch = LaundryBatch.query.filter_by(token=token).first()
     if not existing_batch:
@@ -461,7 +673,7 @@ def _resolve_batch_token_conflict(student, token, active_batch=None):
         return existing_batch, None
     if existing_batch.student_id != student.id:
         return existing_batch, "Token number already in use"
-    if existing_batch.status != 'pickedUp':
+    if existing_batch.status not in ('pickedUp', 'cancelled'):
         return existing_batch, "This token is already linked to another active laundry batch."
 
     existing_batch.token = _build_archived_batch_token(existing_batch)
@@ -646,7 +858,62 @@ def _token_generation_response(message, token_number, details, batch, status_cod
 def index():
     return render_template('landing.html')
 
+@app.route('/staff/login', methods=['GET', 'POST'])
+def staff_login():
+    if _is_staff_logged_in():
+        return redirect(url_for('staff_portal'))
+
+    error = None
+    if request.method == 'POST':
+        username = str(request.form.get('username', '')).strip()
+        password = str(request.form.get('password', '')).strip()
+        user = StaffUser.query.filter(func.lower(StaffUser.username) == username.lower()).first() if username else None
+        if user and check_password_hash(user.password_hash, password):
+            session['staff_user_id'] = user.id
+            session['staff_username'] = user.username
+            next_url = request.args.get('next') or url_for('staff_portal')
+            return redirect(next_url)
+        error = 'Invalid username or password.'
+    return render_template('staff/login.html', error=error)
+
+@app.route('/staff/signup', methods=['GET', 'POST'])
+def staff_signup():
+    if _is_staff_logged_in():
+        return redirect(url_for('staff_portal'))
+
+    error = None
+    success = None
+    if request.method == 'POST':
+        username = str(request.form.get('username', '')).strip()
+        password = str(request.form.get('password', '')).strip()
+        confirm_password = str(request.form.get('confirm_password', '')).strip()
+
+        if not username or not password:
+            error = 'Username and password are required.'
+        elif password != confirm_password:
+            error = 'Passwords do not match.'
+        elif StaffUser.query.filter(func.lower(StaffUser.username) == username.lower()).first():
+            error = 'Username already exists.'
+        else:
+            db.session.add(
+                StaffUser(
+                    username=username,
+                    password_hash=generate_password_hash(password)
+                )
+            )
+            db.session.commit()
+            success = 'Staff account created successfully. You can sign in now.'
+
+    return render_template('staff/signup.html', error=error, success=success)
+
+@app.route('/staff/logout', methods=['GET'])
+def staff_logout():
+    session.pop('staff_user_id', None)
+    session.pop('staff_username', None)
+    return redirect(url_for('staff_login'))
+
 @app.route('/staff', methods=['GET'])
+@_staff_login_required
 def staff_portal():
     return render_template('staff/dashboard.html')
 
@@ -674,6 +941,10 @@ def student_notifications_page():
 def student_complaints_page():
     return render_template('student/complaints.html')
 
+@app.route('/student/bucket', methods=['GET'])
+def student_bucket_page():
+    return render_template('student/bucket.html')
+
 @app.route('/student/lost-found', methods=['GET'])
 def student_lost_found_page():
     return render_template('student/lost_found_v2.html')
@@ -692,8 +963,9 @@ def serve_uploaded_file(subpath):
 
 @app.route('/api/dashboard/summary', methods=['GET'])
 def get_dashboard_summary():
+    _process_missed_bookings()
     total_students = Student.query.count()
-    active_batches = LaundryBatch.query.filter(LaundryBatch.status != 'pickedUp').count()
+    active_batches = LaundryBatch.query.filter(LaundryBatch.status.notin_(['pickedUp', 'cancelled'])).count()
     submitted_batches = LaundryBatch.query.filter_by(status='collected').count()
     in_washing = LaundryBatch.query.filter_by(status='washing').count()
     ready_for_pickup = LaundryBatch.query.filter_by(status='washed').count()
@@ -719,6 +991,7 @@ def get_stats_alias():
 
 @app.route('/api/slots/available', methods=['GET'])
 def get_available_slots():
+    _process_missed_bookings()
     date_val = request.args.get('date')
     if not date_val:
         return jsonify({"error": "Date is required"}), 400
@@ -731,15 +1004,34 @@ def get_available_slots():
     for b in batches:
         if b.time_slot in counts:
             counts[b.time_slot] += 1
-            
+    
     slots_info = []
-    for slot in AVAILABLE_SLOTS:
-        slots_info.append({
-            "slot": slot,
-            "booked": counts[slot],
-            "available": MAX_PER_SLOT - counts[slot],
-            "total": MAX_PER_SLOT
-        })
+    try:
+        booking_date = datetime.strptime(date_val, '%Y-%m-%d')
+        today = datetime.now().date()
+        booking_date_only = booking_date.date()
+        current_time = datetime.now().time()
+        
+        for slot in AVAILABLE_SLOTS:
+            # Skip past slots
+            if booking_date_only < today:
+                continue
+            
+            # If booking is for today, skip slots that have already passed
+            if booking_date_only == today:
+                slot_end_str = slot.split(' - ')[1]
+                slot_end_time = datetime.strptime(slot_end_str, '%H:%M').time()
+                if current_time > slot_end_time:
+                    continue
+            
+            slots_info.append({
+                "slot": slot,
+                "booked": counts[slot],
+                "available": MAX_PER_SLOT - counts[slot],
+                "total": MAX_PER_SLOT
+            })
+    except ValueError:
+        pass
     
     return jsonify(slots_info)
 
@@ -767,35 +1059,43 @@ def student_batch_detail(id):
     return render_template('student/batch_detail.html', batch_id=id)
 
 @app.route('/staff/students', methods=['GET'])
+@_staff_login_required
 def staff_students():
     return render_template('staff/students.html')
 
 @app.route('/staff/students/<int:id>', methods=['GET'])
+@_staff_login_required
 def staff_student_detail(id):
     return render_template('staff/student_detail.html', student_id=id)
 
 @app.route('/staff/scan', methods=['GET'])
+@_staff_login_required
 def staff_scan():
     return render_template('staff/scan.html')
 
 @app.route('/staff/schedules', methods=['GET'])
+@_staff_login_required
 def staff_schedules():
     return render_template('staff/schedules.html')
 
 @app.route('/staff/settings', methods=['GET'])
+@_staff_login_required
 def staff_settings():
     return render_template('staff/settings.html')
 
 @app.route('/staff/notifications', methods=['GET'])
+@_staff_login_required
 def staff_notifications():
     """Route for announcement management as in friend's repo"""
     return render_template('staff/notifications.html')
 
 @app.route('/staff/complaints', methods=['GET'])
+@_staff_login_required
 def staff_complaints_page():
     return render_template('staff/complaints.html')
 
 @app.route('/staff/lost-found', methods=['GET'])
+@_staff_login_required
 def staff_lost_found_page():
     return render_template('staff/lost_found_v2.html')
 
@@ -808,6 +1108,9 @@ def delete_student(id):
     )
     Complaint.query.filter_by(student_id=student.id).delete()
     Notification.query.filter_by(student_id=student.id).delete()
+    BucketRequestRecipient.query.filter_by(recipient_student_id=student.id).delete()
+    BucketRequest.query.filter_by(requester_student_id=student.id).delete()
+    BucketRequest.query.filter_by(accepted_by_student_id=student.id).update({"accepted_by_student_id": None})
     DailyLaundryDetail.query.filter_by(student_id=student.id).delete()
     LaundryBatch.query.filter_by(student_id=student.id).delete()
     db.session.delete(student)
@@ -1065,7 +1368,7 @@ def claim_student_token(id):
 
     active_batch = LaundryBatch.query.filter(
         LaundryBatch.student_id == student.id,
-        LaundryBatch.status != 'pickedUp'
+        LaundryBatch.status.notin_(['pickedUp', 'cancelled'])
     ).order_by(LaundryBatch.created_at.desc()).first()
 
     existing_student = Student.query.filter_by(token=token).first()
@@ -1148,6 +1451,7 @@ def update_student(id):
 # --- Routes: Batches ---
 @app.route('/api/batches', methods=['GET'])
 def list_batches():
+    _process_missed_bookings()
     status = request.args.get('status')
     student_id = request.args.get('studentId')
     query = LaundryBatch.query
@@ -1202,6 +1506,8 @@ def create_batch():
 @app.route('/api/batches/by-token/<token>', methods=['GET'])
 def get_batch_by_token(token):
     batch = LaundryBatch.query.filter_by(token=token).first_or_404()
+    if batch.status == 'pickedUp':
+        return jsonify({"error": "Token not found"}), 404
     return jsonify(batch_schema.dump(batch))
 
 @app.route('/api/batches/<int:id>', methods=['GET'])
@@ -1212,7 +1518,7 @@ def get_batch(id):
 @app.route('/api/token/resolve/<token>', methods=['GET'])
 def resolve_token(token):
     batch = LaundryBatch.query.filter_by(token=token).first()
-    if batch:
+    if batch and batch.status != 'pickedUp':
         return jsonify({"type": "batch", "batch": batch_schema.dump(batch)}), 200
 
     student = Student.query.filter_by(token=token).first()
@@ -1262,6 +1568,7 @@ def create_batch_by_token():
 
 @app.route('/api/bookings', methods=['POST'])
 def create_booking():
+    _process_missed_bookings()
     data = request.json or {}
     student_id = data.get('studentId')
     date_val = data.get('date')
@@ -1276,6 +1583,29 @@ def create_booking():
 
     if time_slot not in AVAILABLE_SLOTS:
         return jsonify({"error": "Invalid time slot"}), 400
+
+    # Validate booking date and time (cannot book past slots)
+    try:
+        booking_date = datetime.strptime(date_val, '%Y-%m-%d')
+        today = datetime.now().date()
+        booking_date_only = booking_date.date()
+        
+        # Reject if date is in the past
+        if booking_date_only < today:
+            return jsonify({"error": "Cannot book slots in the past"}), 400
+        
+        # If booking is for today, check if slot has passed
+        if booking_date_only == today:
+            # Extract slot end time
+            slot_end_str = time_slot.split(' - ')[1]  # e.g., "09:00"
+            slot_end_time = datetime.strptime(slot_end_str, '%H:%M').time()
+            current_time = datetime.now().time()
+            
+            # Reject if slot has already ended
+            if current_time > slot_end_time:
+                return jsonify({"error": "This slot has already passed"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid date format"}), 400
 
     # Ensure max 25
     current_bookings = LaundryBatch.query.filter_by(scheduled_date=date_val, time_slot=time_slot).count()
@@ -1338,7 +1668,7 @@ def create_batch_by_own_token():
 
     active_batch = LaundryBatch.query.filter(
         LaundryBatch.student_id == student.id,
-        LaundryBatch.status != 'pickedUp'
+        LaundryBatch.status.notin_(['pickedUp', 'cancelled'])
     ).order_by(LaundryBatch.created_at.desc()).first()
 
     existing_student = Student.query.filter_by(token=token).first()
@@ -1409,6 +1739,8 @@ def update_batch_status(id):
             batch.collected_at = now
             batch.washed_at = None
             batch.picked_up_at = None
+        else:
+            _detach_token_from_batch_student(batch)
     
     _create_notification(batch.student_id, batch.id, new_status)
     student_room = _parse_room_number(batch.student.room_number) or 0
@@ -1693,6 +2025,184 @@ def update_settings():
         settings.edit_window_open = data['editWindowOpen']
     db.session.commit()
     return jsonify(settings_schema.dump(settings))
+
+def _serialize_bucket_request(req, viewer_student_id=None):
+    my_row = None
+    if viewer_student_id is not None:
+        my_row = BucketRequestRecipient.query.filter_by(
+            request_id=req.id,
+            recipient_student_id=viewer_student_id
+        ).first()
+
+    return {
+        "id": req.id,
+        "clothesCount": req.clothes_count,
+        "status": req.status,
+        "createdAt": req.created_at.isoformat() if req.created_at else None,
+        "acceptedAt": req.accepted_at.isoformat() if req.accepted_at else None,
+        "requester": student_schema.dump(req.requester) if req.requester else None,
+        "acceptedBy": student_schema.dump(req.accepted_by) if req.accepted_by else None,
+        "myResponse": my_row.response if my_row else None,
+        "canRespond": bool(req.status == 'open' and my_row and my_row.response == 'pending')
+    }
+
+@app.route('/api/bucket/eligibility', methods=['GET'])
+def bucket_eligibility():
+    student_id = request.args.get('studentId', type=int)
+    if not student_id:
+        return jsonify({"error": "studentId is required"}), 400
+
+    Student.query.get_or_404(student_id)
+    booking_count = _student_booking_count_current_month(student_id)
+    incoming_open_count = BucketRequestRecipient.query.join(
+        BucketRequest, BucketRequestRecipient.request_id == BucketRequest.id
+    ).filter(
+        BucketRequestRecipient.recipient_student_id == student_id,
+        BucketRequest.status == 'open',
+        BucketRequestRecipient.response == 'pending'
+    ).count()
+    return jsonify({
+        "eligible": booking_count >= MONTHLY_SLOT_LIMIT,
+        "bookingCount": booking_count,
+        "requiredCount": MONTHLY_SLOT_LIMIT,
+        "hasIncomingRequests": incoming_open_count > 0
+    })
+
+@app.route('/api/bucket/requests', methods=['GET'])
+def list_bucket_requests():
+    student_id = request.args.get('studentId', type=int)
+    if not student_id:
+        return jsonify({"error": "studentId is required"}), 400
+    Student.query.get_or_404(student_id)
+
+    recipient_rows = BucketRequestRecipient.query.filter_by(recipient_student_id=student_id).all()
+    recipient_request_ids = [r.request_id for r in recipient_rows]
+
+    relevant = BucketRequest.query.filter(
+        (BucketRequest.requester_student_id == student_id) |
+        (BucketRequest.accepted_by_student_id == student_id) |
+        (BucketRequest.id.in_(recipient_request_ids))
+    ).order_by(BucketRequest.created_at.desc()).all()
+
+    visible = []
+    for req in relevant:
+        if req.status == 'accepted' and req.requester_student_id != student_id and req.accepted_by_student_id != student_id:
+            continue
+        visible.append(_serialize_bucket_request(req, student_id))
+    return jsonify(visible)
+
+@app.route('/api/bucket/requests', methods=['POST'])
+def create_bucket_request():
+    data = request.json or {}
+    student_id = data.get('studentId')
+    clothes_count = data.get('clothesCount')
+
+    if not student_id:
+        return jsonify({"error": "studentId is required"}), 400
+    try:
+        clothes_count = int(clothes_count)
+    except Exception:
+        return jsonify({"error": "clothesCount must be a number"}), 400
+    if clothes_count < 1 or clothes_count > 5:
+        return jsonify({"error": "Number of clothes must be between 1 and 5"}), 400
+
+    student = Student.query.get_or_404(int(student_id))
+    if not _student_has_bucket_access(student.id):
+        return jsonify({"error": "Bucket request is available only after 4 bookings are exhausted."}), 403
+
+    existing_open = BucketRequest.query.filter_by(requester_student_id=student.id, status='open').first()
+    if existing_open:
+        return jsonify({"error": "You already have an open bucket request."}), 400
+
+    candidates = [s for s in _students_with_slots_next_7_days() if s.id != student.id]
+    if not candidates:
+        return jsonify({"error": "No students found with slots in the next 7 days."}), 400
+
+    req = BucketRequest(
+        requester_student_id=student.id,
+        clothes_count=clothes_count,
+        status='open'
+    )
+    db.session.add(req)
+    db.session.flush()
+
+    for cand in candidates:
+        db.session.add(BucketRequestRecipient(
+            request_id=req.id,
+            recipient_student_id=cand.id,
+            response='pending'
+        ))
+        db.session.add(Notification(
+            student_id=cand.id,
+            status='bucket',
+            message=f"Urgent bucket request from {student.name}: {clothes_count} clothes. Please accept or decline."
+        ))
+
+    db.session.commit()
+    return jsonify(_serialize_bucket_request(req, student.id)), 201
+
+@app.route('/api/bucket/requests/<int:request_id>/respond', methods=['POST'])
+def respond_bucket_request(request_id):
+    data = request.json or {}
+    student_id = data.get('studentId')
+    action = str(data.get('action', '')).strip().lower()
+
+    if not student_id:
+        return jsonify({"error": "studentId is required"}), 400
+    if action not in ['accept', 'decline']:
+        return jsonify({"error": "action must be accept or decline"}), 400
+
+    student = Student.query.get_or_404(int(student_id))
+    req = BucketRequest.query.get_or_404(request_id)
+
+    recipient_row = BucketRequestRecipient.query.filter_by(
+        request_id=req.id,
+        recipient_student_id=student.id
+    ).first()
+    if not recipient_row:
+        return jsonify({"error": "You are not eligible to respond to this request."}), 403
+    if req.status != 'open':
+        return jsonify({"error": "This request is no longer open."}), 400
+    if recipient_row.response != 'pending':
+        return jsonify({"error": "You have already responded to this request."}), 400
+
+    now = datetime.now()
+    if action == 'decline':
+        recipient_row.response = 'declined'
+        recipient_row.responded_at = now
+        db.session.commit()
+        return jsonify(_serialize_bucket_request(req, student.id)), 200
+
+    req.status = 'accepted'
+    req.accepted_by_student_id = student.id
+    req.accepted_at = now
+    recipient_row.response = 'accepted'
+    recipient_row.responded_at = now
+
+    others = BucketRequestRecipient.query.filter(
+        BucketRequestRecipient.request_id == req.id,
+        BucketRequestRecipient.id != recipient_row.id,
+        BucketRequestRecipient.response == 'pending'
+    ).all()
+    for row in others:
+        row.response = 'declined'
+        row.responded_at = now
+
+    requester = Student.query.get(req.requester_student_id)
+    if requester:
+        db.session.add(Notification(
+            student_id=requester.id,
+            status='bucket',
+            message=f"{student.name} accepted your bucket request."
+        ))
+    db.session.add(Notification(
+        student_id=student.id,
+        status='bucket',
+        message=f"You accepted {requester.name if requester else 'a student'}'s bucket request."
+    ))
+
+    db.session.commit()
+    return jsonify(_serialize_bucket_request(req, student.id)), 200
 
 @app.route('/api/notifications', methods=['GET'])
 def list_notifications():
@@ -2133,7 +2643,9 @@ def update_laundry_record_status(token):
 
 @app.route('/api/announcements', methods=['GET'])
 def list_announcements():
-    announcements = Announcement.query.order_by(Announcement.created_at.desc()).all()
+    _process_missed_bookings()
+    student_id = request.args.get('studentId', type=int)
+    announcements = _announcement_payload_for_student_query(student_id).all()
     return jsonify(announcements_schema.dump(announcements))
 
 @app.route('/api/announcements', methods=['POST'])
@@ -2141,16 +2653,77 @@ def create_announcement():
     data = request.json or {}
     title = (data.get('title') or '').strip()
     message = (data.get('message') or '').strip()
+    audience = (data.get('audience') or 'all').strip().lower()
+    category = (data.get('category') or 'general').strip().lower()
+    target_student_id = data.get('targetStudentId')
+    is_urgent = bool(data.get('isUrgent', False))
 
     if not title:
         return jsonify({"error": "Title is required"}), 400
     if not message:
         return jsonify({"error": "Message is required"}), 400
+    if audience not in ('all', 'student'):
+        return jsonify({"error": "Audience must be all or student"}), 400
 
-    announcement = Announcement(title=title, message=message)
-    db.session.add(announcement)
+    if audience == 'student':
+        try:
+            target_student_id = _parse_int_field(target_student_id, 'targetStudentId')
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        target_student = Student.query.get(target_student_id)
+        if not target_student:
+            return jsonify({"error": "Target student not found"}), 404
+        if not _student_eligible_for_personal_announcement(target_student_id):
+            return jsonify({"error": "Personal messages can be sent only to students in submitted, washing, or ready status."}), 400
+        category = 'personal'
+        is_urgent = True
+
+    announcement = _create_announcement_record(
+        title=title,
+        message=message,
+        audience=audience,
+        target_student_id=target_student_id if audience == 'student' else None,
+        category=category,
+        is_urgent=is_urgent
+    )
     db.session.commit()
     return jsonify(announcement_schema.dump(announcement)), 201
+
+@app.route('/api/announcements/eligible-students', methods=['GET'])
+def list_announcement_eligible_students():
+    _process_missed_bookings()
+    rows = []
+    for student in Student.query.order_by(Student.name.asc()).all():
+        latest_batch = _latest_batch_for_student(student.id)
+        if not latest_batch or latest_batch.status not in PERSONAL_ANNOUNCEMENT_ELIGIBLE_STATUSES:
+            continue
+        rows.append({
+            "id": student.id,
+            "name": student.name,
+            "regNo": student.reg_no,
+            "floor": student.floor,
+            "roomNumber": student.room_number,
+            "status": latest_batch.status
+        })
+    return jsonify(rows), 200
+
+@app.route('/api/urgent-alerts', methods=['GET'])
+def list_urgent_alerts():
+    _process_missed_bookings()
+    student_id = request.args.get('studentId', type=int)
+    audience = (request.args.get('audience') or '').strip().lower()
+    query = Announcement.query.filter(Announcement.is_urgent.is_(True))
+    if student_id is not None:
+        query = query.filter(
+            or_(
+                Announcement.audience == 'all',
+                and_(Announcement.audience == 'student', Announcement.target_student_id == student_id)
+            )
+        )
+    elif audience == 'staff':
+        query = query.filter(Announcement.audience == 'all')
+    alerts = query.order_by(Announcement.created_at.desc()).limit(8).all()
+    return jsonify(announcements_schema.dump(alerts)), 200
 
 @app.route('/api/announcements/<int:id>', methods=['DELETE'])
 def delete_announcement(id):

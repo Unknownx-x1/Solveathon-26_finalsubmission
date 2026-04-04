@@ -27,7 +27,7 @@
             <div class="mb-8 p-4 bg-gray-50 rounded-xl flex items-center gap-3 border border-gray-100 shadow-sm">
                 <div class="w-10 h-10 bg-gray-900 rounded-full flex items-center justify-center text-white font-bold text-lg">L</div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-gray-900 truncate">Laundry Manager</p>
+                    <p class="text-sm font-bold text-gray-900 truncate">{{ session.get('staff_username', 'Laundry Manager') }}</p>
                     <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Administrator</p>
                 </div>
             </div>
@@ -88,11 +88,11 @@
             </div>
         </div>
         <div class="p-6 border-t border-gray-100">
-            <a href="/" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 transition-all-custom">
+            <a href="/staff/logout" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 transition-all-custom">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4-4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                 </svg>
-                Exit Portal
+                Sign Out
             </a>
         </div>
     </aside>

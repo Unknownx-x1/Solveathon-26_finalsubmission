@@ -39,7 +39,7 @@
 
     try {
         const [annRes, nRes] = await Promise.all([
-            fetch('/api/announcements'),
+            fetch('/api/announcements?studentId=' + encodeURIComponent(sid)),
             fetch('/api/notifications?studentId=' + encodeURIComponent(sid))
         ]);
 

@@ -50,6 +50,14 @@ class SystemSettings(db.Model):
     edit_window_open = db.Column(db.Boolean, nullable=False, default=False)
     updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
 
+class StaffUser(db.Model):
+    __tablename__ = 'staff_users'
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String, nullable=False, unique=True)
+    password_hash = db.Column(db.String, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    updated_at = db.Column(db.DateTime, nullable=False, server_default=func.now(), onupdate=func.now())
+
 class StudentInvite(db.Model):
     __tablename__ = 'student_invites'
     id = db.Column(db.Integer, primary_key=True)
@@ -65,7 +73,13 @@ class Announcement(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String, nullable=False)
     message = db.Column(db.String, nullable=False)
+    audience = db.Column(db.String, nullable=False, default='all')
+    target_student_id = db.Column(db.Integer, db.ForeignKey('students.id', ondelete='CASCADE'))
+    category = db.Column(db.String, nullable=False, default='general')
+    is_urgent = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+    target_student = db.relationship('Student', backref=db.backref('targeted_announcements', lazy=True))
 
 class Notification(db.Model):
     __tablename__ = 'notifications'
@@ -103,6 +117,30 @@ class DailyLaundryDetail(db.Model):
     room_number = db.Column(db.Integer, nullable=False)
     notes = db.Column(db.String)
     created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+
+class BucketRequest(db.Model):
+    __tablename__ = 'bucket_requests'
+    id = db.Column(db.Integer, primary_key=True)
+    requester_student_id = db.Column(db.Integer, db.ForeignKey('students.id', ondelete='CASCADE'), nullable=False)
+    clothes_count = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String, nullable=False, default='open')  # open, accepted, closed
+    accepted_by_student_id = db.Column(db.Integer, db.ForeignKey('students.id', ondelete='SET NULL'))
+    created_at = db.Column(db.DateTime, nullable=False, server_default=func.now())
+    accepted_at = db.Column(db.DateTime)
+
+    requester = db.relationship('Student', foreign_keys=[requester_student_id], backref=db.backref('bucket_requests_created', lazy=True))
+    accepted_by = db.relationship('Student', foreign_keys=[accepted_by_student_id], backref=db.backref('bucket_requests_accepted', lazy=True))
+
+class BucketRequestRecipient(db.Model):
+    __tablename__ = 'bucket_request_recipients'
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey('bucket_requests.id', ondelete='CASCADE'), nullable=False)
+    recipient_student_id = db.Column(db.Integer, db.ForeignKey('students.id', ondelete='CASCADE'), nullable=False)
+    response = db.Column(db.String, nullable=False, default='pending')  # pending, accepted, declined
+    responded_at = db.Column(db.DateTime)
+
+    request = db.relationship('BucketRequest', backref=db.backref('recipients', lazy=True, cascade='all,delete-orphan'))
+    recipient = db.relationship('Student', backref=db.backref('bucket_requests_received', lazy=True))
 
 class LaundryRecord(db.Model):
     __tablename__ = 'laundry_records'
@@ -194,7 +232,11 @@ class AnnouncementSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
         model = Announcement
         load_instance = True
-        exclude = ()
+        exclude = ('target_student_id', 'is_urgent', 'created_at')
+
+    targetStudentId = fields.Integer(attribute='target_student_id', data_key='targetStudentId')
+    isUrgent = fields.Boolean(attribute='is_urgent', data_key='isUrgent')
+    createdAt = fields.DateTime(attribute='created_at', data_key='createdAt')
 
 class NotificationSchema(ma.SQLAlchemyAutoSchema):
     class Meta:
@@ -245,3 +287,22 @@ class LostFoundItemSchema(ma.SQLAlchemyAutoSchema):
     createdBy = fields.String(attribute='created_by', data_key='createdBy')
     archivedAt = fields.DateTime(attribute='archived_at', data_key='archivedAt')
     createdAt = fields.DateTime(attribute='created_at', data_key='createdAt')
+
+class BucketRequestSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = BucketRequest
+        load_instance = True
+        include_fk = True
+        exclude = ()
+
+    requester = ma.Nested(StudentSchema)
+    acceptedBy = ma.Nested(StudentSchema, attribute='accepted_by', data_key='acceptedBy')
+
+class BucketRequestRecipientSchema(ma.SQLAlchemyAutoSchema):
+    class Meta:
+        model = BucketRequestRecipient
+        load_instance = True
+        include_fk = True
+        exclude = ()
+
+    recipient = ma.Nested(StudentSchema)

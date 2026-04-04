@@ -1,0 +1,14 @@
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.10"
+
+[phases.setup]
+nixPkgs = [
+  "gcc",
+  "zlib",
+  "libGL",
+  "glib",
+  "poppler_utils"
+]
+
+[start]
+cmd = "gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 180"

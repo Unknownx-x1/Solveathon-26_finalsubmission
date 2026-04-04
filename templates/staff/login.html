@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Staff Login{% endblock %}
+{% block content %}
+<div class="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+    <div class="w-full max-w-md">
+        <div class="rounded-3xl border border-gray-200 bg-white shadow-xl shadow-gray-100 overflow-hidden">
+            <div class="bg-gradient-to-r from-blue-700 via-blue-600 to-sky-500 px-8 py-8 text-white">
+                <p class="text-xs font-bold uppercase tracking-[0.35em] text-blue-100">Laundry Staff</p>
+                <h1 class="mt-3 text-3xl font-black tracking-tight">Staff Login</h1>
+                <p class="mt-2 text-sm text-blue-100">Sign in to access the booking board, laundry history, and announcements.</p>
+            </div>
+            <div class="px-8 py-8">
+                {% if error %}
+                <div class="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{{ error }}</div>
+                {% endif %}
+                <form method="post" class="space-y-5">
+                    <div>
+                        <label for="username" class="block text-sm font-semibold text-gray-700 mb-2">Username</label>
+                        <input id="username" name="username" type="text" required class="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100" placeholder="Enter username">
+                    </div>
+                    <div>
+                        <label for="password" class="block text-sm font-semibold text-gray-700 mb-2">Password</label>
+                        <input id="password" name="password" type="password" required class="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100" placeholder="Enter password">
+                    </div>
+                    <button type="submit" class="w-full rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white shadow-lg shadow-blue-100 transition hover:bg-blue-700">Enter Staff Portal</button>
+                </form>
+                <p class="mt-5 text-center text-sm text-gray-500">Need a new staff account? <a href="/staff/signup" class="font-semibold text-blue-600 hover:text-blue-700">Create one here</a></p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

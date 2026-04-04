@@ -9,6 +9,7 @@ requests
 beautifulsoup4
 itsdangerous
 gunicorn
+waitress
 
 # Schedule OCR upload (image/PDF)
 easyocr

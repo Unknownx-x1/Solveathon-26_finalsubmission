@@ -91,7 +91,14 @@ def migrate():
         announcements = session_student.execute(db.select(Announcement)).scalars().all()
         for a in announcements:
             new_a = Announcement(
-                id=a.id, title=a.title, message=a.message, created_at=a.created_at
+                id=a.id,
+                title=a.title,
+                message=a.message,
+                audience=getattr(a, 'audience', 'all'),
+                target_student_id=getattr(a, 'target_student_id', None),
+                category=getattr(a, 'category', 'general'),
+                is_urgent=getattr(a, 'is_urgent', False),
+                created_at=a.created_at
             )
             db.session.merge(new_a)
         

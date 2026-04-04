@@ -1,4 +1,5 @@
 import os
+import os
 import re
 import uuid
 
@@ -10,6 +11,7 @@ from PIL import Image
 
 _OCR_READER = None
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+_PRIMARY_CONFIDENCE = 0.5
 
 
 def allowed_image(filename):
@@ -45,11 +47,21 @@ def _get_reader():
 def _preprocess_image(image_path):
     image = Image.open(image_path).convert("RGB")
     image_np = np.array(image)
+    height, width = image_np.shape[:2]
+    max_side = max(height, width)
+    if max_side > 1400:
+        scale = 1400.0 / max_side
+        image_np = cv2.resize(
+            image_np,
+            None,
+            fx=scale,
+            fy=scale,
+            interpolation=cv2.INTER_AREA,
+        )
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
-    enlarged = cv2.resize(gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+    enlarged = cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
     _, threshold = cv2.threshold(enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    inverted = cv2.bitwise_not(threshold)
     adaptive = cv2.adaptiveThreshold(
         enlarged,
         255,
@@ -58,7 +70,12 @@ def _preprocess_image(image_path):
         31,
         11,
     )
-    return [image_np, enlarged, threshold, inverted, adaptive]
+    return {
+        "base": image_np,
+        "gray": enlarged,
+        "threshold": threshold,
+        "adaptive": adaptive,
+    }
 
 
 def _extract_candidates(results):
@@ -87,29 +104,21 @@ def _extract_candidates(results):
     return candidates
 
 
-def extract_token_number(image_path):
-    processed_images = _preprocess_image(image_path)
-    reader = _get_reader()
-
-    all_results = []
-    for image in processed_images:
-        all_results.extend(reader.readtext(image, detail=1, allowlist="0123456789"))
-    candidates = _extract_candidates(all_results)
-
+def _select_best_candidate(candidates):
     if not candidates:
-        raise ValueError("No numeric token detected in the image.")
+        return None, []
 
-    digit_only_candidates = [item for item in candidates if item["is_digits_only"]]
+    filtered = candidates
+    digit_only_candidates = [item for item in filtered if item["is_digits_only"]]
     if digit_only_candidates:
-        candidates = digit_only_candidates
+        filtered = digit_only_candidates
 
-    three_digit_candidates = [item for item in candidates if item["length"] == 3]
+    three_digit_candidates = [item for item in filtered if item["length"] == 3]
     if three_digit_candidates:
-        candidates = three_digit_candidates
+        filtered = three_digit_candidates
 
-    # Prefer confident OCR first, then prominent text, then later detections as a tie-breaker.
     ranked = sorted(
-        candidates,
+        filtered,
         key=lambda item: (
             item["confidence"],
             item["area"],
@@ -117,10 +126,37 @@ def extract_token_number(image_path):
             item["index"],
         ),
     )
-    best_candidate = ranked[-1]
+    return ranked[-1], filtered
+
+
+def extract_token_number(image_path):
+    processed_images = _preprocess_image(image_path)
+    reader = _get_reader()
+
+    passes = [
+        processed_images["threshold"],
+        processed_images["gray"],
+        processed_images["adaptive"],
+    ]
+    all_results = []
+    best_candidate = None
+    chosen_candidates = []
+
+    for index, image in enumerate(passes):
+        results = reader.readtext(image, detail=1, allowlist="0123456789")
+        all_results.extend(results)
+        best_candidate, chosen_candidates = _select_best_candidate(_extract_candidates(all_results))
+        if not best_candidate:
+            continue
+        if index == 0 or best_candidate["confidence"] >= _PRIMARY_CONFIDENCE:
+            break
+
+    if not best_candidate:
+        raise ValueError("No numeric token detected in the image.")
+
     return best_candidate["value"], {
         "rawText": " ".join([item[1] for item in all_results]),
         "matchedText": best_candidate["text"],
         "confidence": round(best_candidate["confidence"], 4),
-        "candidates": [item["value"] for item in candidates],
+        "candidates": [item["value"] for item in chosen_candidates],
     }
