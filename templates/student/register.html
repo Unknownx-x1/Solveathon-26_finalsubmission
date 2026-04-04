@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-screen flex items-center justify-center p-6">
+    <div class="w-full max-w-3xl">
+        <div class="card p-8 md:p-10">
+            <div class="flex items-center gap-4 mb-8">
+                <div class="bg-blue-50 rounded-2xl p-3 border border-blue-100">
+                    <img src="{{ url_for('static', filename='image.png') }}" alt="VIT Logo" class="h-8">
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-900">Student Access</h1>
+                    <p class="text-sm text-gray-500">Verify your identity via VTOP or register manually</p>
+                </div>
+            </div>
+
+            <div id="vtop-section">
+                <form id="vtop-register-form" class="space-y-5">
+                    <div>
+                        <label class="text-xs font-semibold text-gray-500">VTOP Username</label>
+                        <input type="text" id="vtop-username" required class="input-modern w-full mt-2" placeholder="e.g. 21BCE0001">
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-gray-500">VTOP Password</label>
+                        <input type="password" id="vtop-password" required class="input-modern w-full mt-2" placeholder="Password">
+                    </div>
+
+                    <div>
+                        <label class="text-xs font-semibold text-gray-500">Verification</label>
+                        <div class="mt-2 flex items-center gap-3">
+                            <div id="captcha-container" class="flex-1 bg-gray-50 rounded-2xl h-[56px] flex items-center justify-center border border-2 border-gray-100 shadow-inner overflow-hidden">
+                                <span class="text-gray-400 text-xs font-bold">Loading...</span>
+                            </div>
+                            <button type="button" id="refresh-captcha" class="h-[56px] px-6 bg-blue-50 text-blue-700 font-bold border border-blue-100 rounded-2xl hover:bg-blue-100 transition-all active:scale-95 shadow-sm">
+                                Refresh
+                            </button>
+                        </div>
+                        <input type="text" id="vtop-captcha" required class="input-modern w-full mt-3" placeholder="Enter Captcha">
+                    </div>
+
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-4 px-6 rounded-2xl shadow-lg shadow-blue-100 transition-all active:scale-95">
+                        Verify & Enter
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div id="error-message" class="hidden mt-4 rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700"></div>
+        <p class="text-center text-sm text-gray-500 mt-6"><a href="/" class="underline">Back to home</a></p>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/portal_i18n.js') }}"></script>
+
+<div id="loading-overlay" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="bg-white rounded-lg p-6 text-center space-y-3 shadow-xl">
+        <svg class="animate-spin h-8 w-8 mx-auto text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <p class="text-gray-600 text-sm">Please wait...</p>
+    </div>
+</div>
+
+<script>
+(function () {
+    const errorDiv = document.getElementById('error-message');
+    const loading = document.getElementById('loading-overlay');
+    let currentSessionId = null;
+
+    function showError(msg) {
+        errorDiv.textContent = msg;
+        errorDiv.classList.remove('hidden');
+        loading.classList.add('hidden');
+    }
+
+    function clearError() {
+        errorDiv.classList.add('hidden');
+    }
+
+    async function enterPortal(student, mode, displayRegNo) {
+        localStorage.setItem('studentId', String(student.id));
+        localStorage.setItem('studentName', student.name || '');
+        localStorage.setItem('studentRegNo', displayRegNo || student.regNo || student.reg_no || '');
+        localStorage.setItem('studentLoginMode', mode || 'vtop');
+        try {
+            const r = await fetch('/api/health');
+            if (r.ok) {
+                const data = await r.json();
+                const bootId = data && (data.bootId || data.boot_id);
+                if (bootId) {
+                    localStorage.setItem('serverBootId', bootId);
+                }
+            }
+        } catch (e) {
+            // Ignore
+        }
+        window.location.href = '/student';
+    }
+
+    async function fetchCaptcha() {
+        const container = document.getElementById('captcha-container');
+        container.innerHTML = '<span class="text-gray-400 text-xs">Loading...</span>';
+        try {
+            const res = await fetch('/vtop/start-login', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'captcha_ready') {
+                currentSessionId = data.session_id;
+                container.innerHTML = `<img src="${data.captcha_image_data}" alt="captcha" class="max-h-full" />`;
+            } else {
+                container.innerHTML = '<span class="text-red-500 text-xs">Failed</span>';
+            }
+        } catch (err) {
+            container.innerHTML = '<span class="text-red-500 text-xs">Error</span>';
+        }
+    }
+
+    const sid = localStorage.getItem('studentId');
+    const mode = localStorage.getItem('studentLoginMode');
+    if (sid && !window.location.search.includes('logout=true')) {
+        fetch('/api/health')
+            .then(r => r.json())
+            .then(async (data) => {
+                const bootId = data && (data.bootId || data.boot_id);
+                const storedBoot = localStorage.getItem('serverBootId');
+                if (storedBoot && bootId && storedBoot !== bootId) {
+                    localStorage.removeItem('studentId');
+                    localStorage.removeItem('studentName');
+                    localStorage.removeItem('studentRegNo');
+                    localStorage.removeItem('studentLoginMode');
+                    localStorage.removeItem('serverBootId');
+                    return;
+                }
+                if (bootId && !storedBoot) {
+                    localStorage.setItem('serverBootId', bootId);
+                }
+                
+                const r = await fetch('/vtop/session-check');
+                const s = await r.json();
+                if (s && s.vtop && s.valid) {
+                    window.location.replace('/student');
+                } else {
+                    localStorage.removeItem('studentId');
+                    localStorage.removeItem('studentName');
+                    localStorage.removeItem('studentRegNo');
+                    localStorage.removeItem('studentLoginMode');
+                    localStorage.removeItem('serverBootId');
+                    fetchCaptcha();
+                }
+            })
+            .catch(() => { fetchCaptcha(); });
+        return;
+    }
+
+    fetchCaptcha();
+    document.getElementById('refresh-captcha').addEventListener('click', fetchCaptcha);
+
+    document.getElementById('vtop-register-form').addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearError();
+        if (!currentSessionId) {
+            showError('Session not initialized. Please refresh captcha.');
+            return;
+        }
+        loading.classList.remove('hidden');
+
+        try {
+            const loginRes = await fetch('/vtop/login-attempt', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: currentSessionId,
+                    username: document.getElementById('vtop-username').value.trim(),
+                    password: document.getElementById('vtop-password').value,
+                    captcha: document.getElementById('vtop-captcha').value.trim()
+                })
+            });
+            const loginData = await loginRes.json();
+
+            if (loginData.status !== 'success') {
+                showError(loginData.message || 'VTOP Login failed');
+                fetchCaptcha();
+                return;
+            }
+
+            const regRes = await fetch('/api/register/vtop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            const regData = await regRes.json();
+
+            if (regData.status !== 'success') {
+                showError(regData.message || 'Registration failed');
+                return;
+            }
+
+            enterPortal(regData.student, 'vtop', document.getElementById('vtop-username').value.trim());
+        } catch (err) {
+            showError('Something went wrong. Please try again.');
+        }
+    });
+
+})();
+</script>
+{% endblock %}

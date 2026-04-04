@@ -1,0 +1,187 @@
+{% extends "student/student_layout.html" %}
+
+{% block student_content %}
+<div class="space-y-6 max-w-6xl">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Lost &amp; Found</h1>
+        <p class="text-sm text-gray-500 mt-1">Your generated token image stays private in My Current Laundry. It enters the shared Lost &amp; Found board only after you mark it as lost.</p>
+    </div>
+
+    <div class="grid gap-6 lg:grid-cols-[420px_minmax(0,1fr)]">
+        <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <h2 class="text-lg font-semibold text-gray-900">My Current Laundry Item</h2>
+            <p class="text-sm text-gray-500 mt-1">A token appears here after OCR token generation and stays active until you mark the laundry as picked up.</p>
+
+            <div id="my-current-item" class="mt-6 rounded-xl border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">
+                Loading your current laundry item...
+            </div>
+
+            <div id="lost-report-feedback" class="hidden mt-4 rounded-lg p-3 text-sm font-medium"></div>
+        </section>
+
+        <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+            <div class="flex items-center justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">Shared Lost &amp; Found Board</h2>
+                    <p class="text-sm text-gray-500 mt-1">All students and staff can see the same token number and image.</p>
+                </div>
+                <button id="refresh-reports" class="px-3 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Refresh</button>
+            </div>
+
+            <div id="student-reports" class="mt-6 space-y-4"></div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const studentId = localStorage.getItem('studentId');
+    if (!studentId) {
+        window.location.replace('/student/register');
+        return;
+    }
+
+    const feedback = document.getElementById('lost-report-feedback');
+    const currentItemContainer = document.getElementById('my-current-item');
+    const reportsContainer = document.getElementById('student-reports');
+
+    function setFeedback(message, tone) {
+        feedback.textContent = message;
+        feedback.className = 'mt-4 rounded-lg p-3 text-sm font-medium';
+        if (tone === 'success') {
+            feedback.classList.add('bg-green-50', 'text-green-700', 'border', 'border-green-200');
+        } else {
+            feedback.classList.add('bg-red-50', 'text-red-700', 'border', 'border-red-200');
+        }
+        feedback.classList.remove('hidden');
+    }
+
+    function badgeClass(status) {
+        if (status === 'found') return 'bg-green-50 text-green-700 border-green-200';
+        if (status === 'lost') return 'bg-red-50 text-red-700 border-red-200';
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+    }
+
+    function renderCurrentItem(item) {
+        if (!item) {
+            currentItemContainer.innerHTML = 'No active token-tracked laundry item found. Generate a token first.';
+            return;
+        }
+
+        const canMarkLost = item.status === 'tracked' || item.status === 'found';
+        currentItemContainer.className = 'mt-6 rounded-xl border border-gray-200 bg-white p-4';
+        currentItemContainer.innerHTML = `
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <h3 class="text-base font-semibold text-gray-900">Token ${item.tokenNumber}</h3>
+                    <p class="text-xs text-gray-500 mt-1">${item.studentName || 'Unknown student'}${item.studentRegNo ? ' • ' + item.studentRegNo : ''}</p>
+                </div>
+                <span class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${badgeClass(item.status)}">${item.status}</span>
+            </div>
+            <div class="mt-4 flex items-center gap-4">
+                <img src="${item.imageUrl}" alt="Current laundry item" class="h-24 w-24 rounded-lg object-cover border border-gray-200">
+                <div class="text-sm text-gray-600">
+                    <p>${item.description || 'Laundry bag registered from token generation.'}</p>
+                    <p class="mt-1">This stays private until you press Mark as Lost.</p>
+                </div>
+            </div>
+            <div class="mt-4">
+                ${canMarkLost ? `<button data-item-id="${item.id}" class="mark-lost-btn inline-flex items-center px-4 py-2 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700">Mark as Lost</button>` : '<p class="text-sm text-green-700">This item is already marked as lost.</p>'}
+            </div>
+        `;
+
+        currentItemContainer.querySelectorAll('.mark-lost-btn').forEach((button) => {
+            button.addEventListener('click', async function () {
+                try {
+                    const response = await fetch('/lost-found/' + button.getAttribute('data-item-id') + '/status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'lost', studentId: studentId })
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        throw new Error(payload.error || 'Could not mark item as lost');
+                    }
+                    setFeedback(payload.message || 'Item marked as lost.', 'success');
+                    loadCurrentItem();
+                    loadReports();
+                } catch (error) {
+                    setFeedback(error.message, 'error');
+                }
+            });
+        });
+    }
+
+    function renderReports(items) {
+        if (!items.length) {
+            reportsContainer.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">No lost &amp; found reports yet.</div>';
+            return;
+        }
+
+        reportsContainer.innerHTML = items.map((item) => {
+            const mine = String(item.studentId || '') === String(studentId) ? '<span class="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 border border-blue-200">My bag</span>' : '';
+            return `
+                <article class="rounded-xl border border-gray-200 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <h3 class="text-base font-semibold text-gray-900">Token ${item.tokenNumber}</h3>
+                                ${mine}
+                            </div>
+                            <p class="text-xs text-gray-500 mt-1">Created ${new Date(item.createdAt).toLocaleString()}</p>
+                        </div>
+                        <span class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${badgeClass(item.status)}">${item.status}</span>
+                    </div>
+                    <div class="mt-4 flex items-center gap-4">
+                        <img src="${item.imageUrl}" alt="Lost item" class="h-20 w-20 rounded-lg object-cover border border-gray-200">
+                        <div class="text-sm text-gray-500">
+                            <p>${item.studentName || 'Unknown student'}${item.studentRegNo ? ' • ' + item.studentRegNo : ''}</p>
+                            <p>Token ${item.tokenNumber}</p>
+                            <p>${item.status === 'lost' ? 'Marked as lost and waiting to be found.' : item.status === 'found' ? 'Marked as found.' : 'Tracked and active.'}</p>
+                        </div>
+                    </div>
+                </article>
+            `;
+        }).join('');
+    }
+
+    async function loadCurrentItem() {
+        try {
+            const response = await fetch('/api/token-generation/current?studentId=' + encodeURIComponent(studentId));
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Failed to load current laundry item');
+            }
+            renderCurrentItem(payload.currentLaundryItem);
+        } catch (error) {
+            currentItemContainer.className = 'mt-6 rounded-xl border border-red-200 bg-red-50 p-6 text-sm text-red-700';
+            currentItemContainer.textContent = error.message;
+        }
+    }
+
+    async function loadReports() {
+        reportsContainer.innerHTML = '<div class="rounded-lg border border-gray-200 p-6 text-sm text-gray-500">Loading shared reports...</div>';
+        try {
+            const response = await fetch('/lost-found');
+            const items = await response.json();
+            if (!response.ok) {
+                throw new Error(items.error || 'Failed to load reports');
+            }
+            renderReports(items);
+        } catch (error) {
+            reportsContainer.innerHTML = '<div class="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">' + error.message + '</div>';
+        }
+    }
+
+    document.getElementById('refresh-reports').addEventListener('click', function () {
+        loadCurrentItem();
+        loadReports();
+    });
+
+    loadCurrentItem();
+    loadReports();
+})();
+</script>
+{% endblock %}

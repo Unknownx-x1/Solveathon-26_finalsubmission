@@ -1,0 +1,22 @@
+# Database
+*.db
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+
+# Env files (IMPORTANT)
+.env
+
+# Flask instance folder
+instance/
+
+# OS / Editor
+.DS_Store
+Thumbs.db

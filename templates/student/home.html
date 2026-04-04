@@ -1,0 +1,258 @@
+{% extends "student/student_layout.html" %}
+
+{% block student_content %}
+<div class="space-y-6">
+    <div>
+        <h1 id="greeting" class="text-3xl font-bold text-gray-900">Student Dashboard</h1>
+        <p id="student-line" class="text-sm text-gray-500 mt-1"></p>
+    </div>
+
+    <!-- Booking Section -->
+    <div id="booking-section" class="bg-white border border-gray-200 rounded-xl shadow-sm p-5 hidden">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Book a Laundry Slot</h2>
+        <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Select Date</label>
+                    <input type="date" id="date-picker" class="border border-gray-300 rounded-md p-2 w-full focus:ring-blue-500 focus:border-blue-500">
+                </div>
+                <div id="monthly-stats" class="bg-blue-50 rounded-lg p-3 text-sm text-blue-800 flex flex-col justify-center">
+                    <p class="font-medium">Monthly Usage</p>
+                    <p id="usage-text">Loading...</p>
+                </div>
+            </div>
+            
+            <div id="slots-container" class="hidden">
+                <label class="block text-sm font-medium text-gray-700 mb-2">Available Time Slots</label>
+                <div id="slots-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <!-- Slots rendered here -->
+                </div>
+            </div>
+
+            <button id="book-btn" class="hidden px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-bold w-full sm:w-auto shadow-sm transition-all disabled:opacity-50 mt-4">
+                Confirm Booking
+            </button>
+            <p id="book-msg" class="text-sm mt-3"></p>
+        </div>
+    </div>
+
+    <!-- Active Booking Section -->
+    <div id="active-booking-section" class="hidden rounded-xl border p-5 shadow-sm bg-blue-50 border-blue-200 text-blue-900">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">Your Active Booking</h2>
+            <span id="ab-status" class="uppercase tracking-wide font-bold text-[10px] py-1 px-2.5 rounded-full bg-blue-600 text-white shadow-sm"></span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="bg-white/50 p-3 rounded-lg border border-blue-100">
+                <label class="block text-[10px] uppercase font-bold text-blue-400 mb-1">Scheduled Date</label>
+                <span id="ab-date" class="text-sm font-medium"></span>
+                <div id="ab-day" class="text-[11px] text-blue-500 font-semibold mt-1"></div>
+            </div>
+            <div class="bg-white/50 p-3 rounded-lg border border-blue-100">
+                <label class="block text-[10px] uppercase font-bold text-blue-400 mb-1">Time Slot</label>
+                <span id="ab-slot" class="text-sm font-medium"></span>
+            </div>
+        </div>
+        <p class="text-[11px] mt-4 text-blue-600 font-medium opacity-80 italic">Note: You can only have one active booking at a time. Each student is limited to 4 bookings per month.</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-gray-900 mb-3">Quick Actions</h2>
+        <div class="flex flex-wrap gap-3">
+            <a href="/student/status" class="flex-1 min-w-[140px] text-center px-4 py-3 rounded-xl bg-blue-50 text-blue-700 text-sm font-bold border border-blue-100 hover:bg-blue-100 transition-colors">
+                Track Laundry
+            </a>
+            <a href="/student/notifications" class="flex-1 min-w-[140px] text-center px-4 py-3 rounded-xl bg-emerald-50 text-emerald-700 text-sm font-bold border border-emerald-100 hover:bg-emerald-100 transition-colors">
+                Notifications
+            </a>
+            <a href="/student/complaints" class="flex-1 min-w-[140px] text-center px-4 py-3 rounded-xl bg-rose-50 text-rose-700 text-sm font-bold border border-rose-100 hover:bg-rose-100 transition-colors">
+                Report Issue
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function () {
+    const sid = localStorage.getItem('studentId');
+    if (!sid) {
+        window.location.replace('/student/register');
+        return;
+    }
+
+    let selectedSlot = null;
+    const LIMIT = 4;
+
+    function getMonthPrefix(dateStr) {
+        return dateStr.substring(0, 7); // YYYY-MM
+    }
+
+    async function updateUsageStats(batches) {
+        const now = new Date();
+        const currentMonth = now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, '0');
+        const count = batches.filter(b => b.scheduledDate && b.scheduledDate.startsWith(currentMonth)).length;
+        
+        const usageText = document.getElementById('usage-text');
+        usageText.innerHTML = `<strong>${count} / ${LIMIT}</strong> slots used this month.`;
+        
+        if (count >= LIMIT) {
+            usageText.classList.add('text-red-600');
+            return true; // Limit reached
+        }
+        return false;
+    }
+
+    try {
+        const studentRes = await fetch('/api/students/' + encodeURIComponent(sid));
+        if (!studentRes.ok) throw new Error('Student not found');
+        const student = await studentRes.json();
+
+        document.getElementById('greeting').textContent = 'Hello, ' + ((student.name || 'Student').split(' ')[0]) + '!';
+        document.getElementById('student-line').textContent = 'Floor ' + student.floor + ' - Room ' + student.roomNumber;
+
+        // Check active booking
+        const batchesRes = await fetch(`/api/batches?studentId=${sid}`);
+        const batches = await batchesRes.json();
+        
+        const isLimitReached = await updateUsageStats(batches);
+        const activeBatches = (batches || []).filter(b => b.status !== 'pickedUp');
+        
+        if (activeBatches.length > 0) {
+            // Show active booking
+            const ab = activeBatches[0];
+            document.getElementById('booking-section').classList.add('hidden');
+            document.getElementById('active-booking-section').classList.remove('hidden');
+            document.getElementById('ab-date').textContent = ab.scheduledDate || 'Unscheduled';
+            document.getElementById('ab-slot').textContent = ab.timeSlot || 'Any';
+            document.getElementById('ab-status').textContent = ab.status;
+            const dayTarget = document.getElementById('ab-day');
+            if (ab.scheduledDate) {
+                const d = new Date(ab.scheduledDate + 'T00:00:00');
+                dayTarget.textContent = d.toLocaleDateString(undefined, { weekday: 'long' });
+            } else {
+                dayTarget.textContent = '';
+            }
+        } else {
+            // Show booking section if limit not reached
+            document.getElementById('booking-section').classList.remove('hidden');
+            const dt = new Date();
+            const todayStr = dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,'0') + "-" + String(dt.getDate()).padStart(2,'0');
+            document.getElementById('date-picker').min = todayStr;
+            
+            if (isLimitReached) {
+                document.getElementById('date-picker').disabled = true;
+                document.getElementById('book-msg').textContent = 'You have reached your monthly limit.';
+                document.getElementById('book-msg').className = 'text-sm mt-3 text-red-600 font-bold';
+            }
+        }
+    } catch (e) {
+        console.error(e);
+        document.getElementById('student-line').textContent = 'Could not load your dashboard.';
+    }
+
+    const datePicker = document.getElementById('date-picker');
+    const slotsContainer = document.getElementById('slots-container');
+    const slotsGrid = document.getElementById('slots-grid');
+    const bookBtn = document.getElementById('book-btn');
+    const bookMsg = document.getElementById('book-msg');
+
+    datePicker.addEventListener('change', async function() {
+        const dateVal = this.value;
+        if (!dateVal) {
+            slotsContainer.classList.add('hidden');
+            bookBtn.classList.add('hidden');
+            return;
+        }
+
+        slotsContainer.classList.remove('hidden');
+        slotsGrid.innerHTML = '<p class="text-sm text-gray-400 col-span-3 py-4 text-center">Loading slots...</p>';
+        selectedSlot = null;
+        bookBtn.classList.add('hidden');
+        bookMsg.textContent = '';
+
+        try {
+            const res = await fetch(`/api/slots/available?date=${dateVal}`);
+            const slotsData = await res.json();
+            
+            slotsGrid.innerHTML = '';
+            slotsData.forEach(s => {
+                const isFull = s.available <= 0;
+                const btn = document.createElement('button');
+                btn.className = `flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-200 ` + 
+                    (isFull 
+                        ? `bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed` 
+                        : `bg-white border-blue-100 text-blue-900 hover:border-blue-400 hover:bg-blue-50/50 slot-btn shadow-sm hover:shadow`);
+                
+                btn.disabled = isFull;
+                btn.innerHTML = `
+                    <span class="font-bold text-sm mb-1">${s.slot}</span>
+                    <span class="text-[10px] ${isFull ? 'text-red-400 font-bold uppercase' : 'text-gray-400 font-medium'}">
+                        ${isFull ? 'Sold Out' : s.available + ' spots left'}
+                    </span>
+                `;
+
+                if (!isFull) {
+                    btn.addEventListener('click', () => {
+                        document.querySelectorAll('.slot-btn').forEach(b => {
+                            b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'ring-4', 'ring-blue-100', 'shadow-md');
+                            b.classList.add('bg-white', 'text-blue-900', 'border-blue-100');
+                            b.querySelector('span:last-child').classList.remove('text-blue-100');
+                            b.querySelector('span:last-child').classList.add('text-gray-400');
+                        });
+                        
+                        btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'ring-4', 'ring-blue-100', 'shadow-md');
+                        btn.classList.remove('bg-white', 'text-blue-900', 'border-blue-100');
+                        btn.querySelector('span:last-child').classList.add('text-blue-100');
+                        btn.querySelector('span:last-child').classList.remove('text-gray-400');
+                        
+                        selectedSlot = s.slot;
+                        bookBtn.classList.remove('hidden');
+                        bookBtn.scrollIntoView({ behavior: 'smooth', block: 'end' });
+                    });
+                }
+                slotsGrid.appendChild(btn);
+            });
+        } catch (err) {
+            slotsGrid.innerHTML = '<p class="text-sm text-red-500 col-span-3 py-4 text-center">Failed to load slots.</p>';
+        }
+    });
+
+    bookBtn.addEventListener('click', async function() {
+        if (!selectedSlot || !datePicker.value) return;
+
+        bookBtn.disabled = true;
+        bookMsg.textContent = 'Processing your reservation...';
+        bookMsg.className = 'text-sm mt-3 text-blue-600 font-medium animate-pulse';
+
+        try {
+            const res = await fetch('/api/bookings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    studentId: sid,
+                    date: datePicker.value,
+                    timeSlot: selectedSlot
+                })
+            });
+            const data = await res.json();
+            
+            if (!res.ok) {
+                bookBtn.disabled = false;
+                bookMsg.textContent = data.error || 'Failed to book slot.';
+                bookMsg.className = 'text-sm mt-3 text-red-500 font-bold';
+            } else {
+                bookMsg.textContent = 'Booking confirmed! Reloading...';
+                bookMsg.className = 'text-sm mt-3 text-emerald-600 font-bold';
+                setTimeout(() => window.location.reload(), 800);
+            }
+        } catch(err) {
+            bookBtn.disabled = false;
+            bookMsg.textContent = 'Connection error. Please try again.';
+            bookMsg.className = 'text-sm mt-3 text-red-500 font-bold';
+        }
+    });
+})();
+</script>
+{% endblock %}

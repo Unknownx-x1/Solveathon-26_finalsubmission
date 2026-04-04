@@ -1,0 +1,266 @@
+﻿{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 flex flex-col md:flex-row">
+    <div class="md:hidden flex items-center justify-between p-4 bg-white border-b border-gray-200">
+        <div class="flex items-center gap-2">
+            <img src="{{ url_for('static', filename='image.png') }}" alt="Logo" class="h-8">
+            <span class="font-bold text-gray-900 tracking-tight">Portal</span>
+        </div>
+        <button id="mobile-menu-btn" class="p-2 rounded-lg hover:bg-gray-100">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+        </button>
+    </div>
+
+    <aside id="sidebar" class="hidden md:flex flex-col w-full md:w-64 bg-white sidebar-shadow border-r border-gray-200 transition-all duration-300 z-40 fixed md:relative h-screen">
+        <div class="p-6 flex-1 flex flex-col h-full">
+            <div class="mb-10 hidden md:block">
+                <img src="{{ url_for('static', filename='image.png') }}" alt="VIT Logo" class="w-full object-contain">
+                <div class="h-1 w-12 bg-blue-600 rounded-full mt-4"></div>
+            </div>
+
+            <div class="mb-8 p-4 bg-blue-50 rounded-xl flex items-center gap-3">
+                <div class="w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-sm" id="user-initial">S</div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-gray-900 truncate" id="student-display-name">Student Name</p>
+                    <p class="text-[10px] font-medium text-blue-600 uppercase tracking-widest" id="student-display-regno">Reg No</p>
+                </div>
+            </div>
+
+            <nav class="space-y-1 overflow-y-auto">
+                <a href="/student" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="/student/status" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/status' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6M4 19h16" />
+                    </svg>
+                    Laundry Status
+                </a>
+                <a href="/student/token-generation" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/token-generation' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7V4a1 1 0 011-1h3M4 17v3a1 1 0 001 1h3m8-18h3a1 1 0 011 1v3m0 10v3a1 1 0 01-1 1h-3M8 11h8M8 15h5" />
+                    </svg>
+                    Token Generation
+                </a>
+                <a href="/student/schedule" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/schedule' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Schedule
+                </a>
+                <a href="/student/notifications" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/notifications' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    Notifications
+                </a>
+                <a href="/student/complaints" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/complaints' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.37-3.196A7.313 7.313 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    Complaints
+                </a>
+                <a href="/student/lost-found" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/student/lost-found' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
+                    </svg>
+                    Lost &amp; Found
+                </a>
+            </nav>
+
+            <div class="mt-8">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-4">Preference</label>
+                <div class="px-4">
+                    <select class="portal-lang-toggle w-full border-0 bg-gray-50 rounded-lg p-2.5 text-xs font-bold text-gray-700 focus:ring-0 cursor-pointer" aria-label="Language">
+                        <option value="en">English (US)</option>
+                        <option value="ta">தமிழ் (Tamil)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div class="p-6 border-t border-gray-100">
+            <a href="javascript:void(0)" onclick="studentPortalLogout()" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 transition-all-custom">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4-4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Logout
+            </a>
+        </div>
+    </aside>
+
+    <main class="flex-1 p-6 md:p-10 lg:p-12 overflow-auto bg-gray-50">
+        {% block student_content %}{% endblock %}
+    </main>
+</div>
+
+<div id="student-toast" class="hidden fixed top-5 right-5 z-50 max-w-sm rounded-lg shadow-lg px-4 py-3 text-sm font-medium"></div>
+
+<script src="{{ url_for('static', filename='js/portal_i18n.js') }}"></script>
+
+<script>
+const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+const sidebar = document.getElementById('sidebar');
+
+if (mobileMenuBtn && sidebar) {
+    mobileMenuBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('hidden');
+        sidebar.classList.toggle('flex');
+    });
+}
+
+(function populateStudentInfo() {
+    const name = localStorage.getItem('studentName') || 'Student';
+    const regNo = localStorage.getItem('studentRegNo') || 'N/A';
+    const studentId = localStorage.getItem('studentId');
+
+    const nameEl = document.getElementById('student-display-name');
+    const regNoEl = document.getElementById('student-display-regno');
+    const initialEl = document.getElementById('user-initial');
+
+    if (nameEl) nameEl.textContent = name;
+    if (regNoEl) regNoEl.textContent = regNo;
+    if (initialEl) initialEl.textContent = name.charAt(0).toUpperCase();
+
+    if (studentId) {
+        fetch('/api/students/' + encodeURIComponent(studentId))
+            .then((res) => res.ok ? res.json() : null)
+            .then((student) => {
+                if (!student) return;
+                const nextName = student.name || name;
+                const nextReg = student.regNo || student.reg_no || regNo;
+                localStorage.setItem('studentName', nextName);
+                localStorage.setItem('studentRegNo', nextReg);
+                if (nameEl) nameEl.textContent = nextName;
+                if (regNoEl) regNoEl.textContent = nextReg;
+                if (initialEl) initialEl.textContent = nextName.charAt(0).toUpperCase();
+            })
+            .catch(() => {});
+    }
+})();
+
+async function studentPortalLogout() {
+    try {
+        await fetch('/vtop/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    } catch (e) {
+        console.warn('VTOP logout failed', e);
+    }
+    localStorage.removeItem('studentId');
+    localStorage.removeItem('studentName');
+    localStorage.removeItem('studentRegNo');
+    localStorage.removeItem('studentLoginMode');
+    localStorage.removeItem('serverBootId');
+    window.location.href = '/student/register';
+}
+
+function showStudentToast(message, type) {
+    var el = document.getElementById('student-toast');
+    if (!el) return;
+    el.textContent = message;
+    el.className = 'fixed top-5 right-5 z-50 max-w-sm rounded-lg shadow-lg px-4 py-3 text-sm font-medium';
+    if (type === 'success') {
+        el.classList.add('bg-green-50', 'text-green-800', 'border', 'border-green-200');
+    } else if (type === 'warn') {
+        el.classList.add('bg-amber-50', 'text-amber-800', 'border', 'border-amber-200');
+    } else {
+        el.classList.add('bg-blue-50', 'text-blue-800', 'border', 'border-blue-200');
+    }
+    el.classList.remove('hidden');
+    setTimeout(function() { el.classList.add('hidden'); }, 4500);
+}
+
+(function watchStudentNotifs() {
+    var sid = localStorage.getItem('studentId');
+    if (!sid) return;
+
+    var annKey = 'student_last_announcement_id';
+    var notifKey = 'student_last_personal_notif_id_' + sid;
+
+    async function check() {
+        try {
+            const [annRes, notifRes] = await Promise.all([
+                fetch('/api/announcements'),
+                fetch('/api/notifications?studentId=' + encodeURIComponent(sid))
+            ]);
+
+            if (annRes.ok) {
+                const anns = await annRes.json();
+                const latestAnn = Array.isArray(anns) && anns.length ? anns[0].id : null;
+                const savedAnn = localStorage.getItem(annKey);
+                if (latestAnn) {
+                    if (savedAnn !== null && Number(latestAnn) > Number(savedAnn)) {
+                        showStudentToast('You have a new announcement.', 'info');
+                    }
+                    localStorage.setItem(annKey, String(latestAnn));
+                }
+            }
+
+            if (notifRes.ok) {
+                const notifs = await notifRes.json();
+                const latestN = Array.isArray(notifs) && notifs.length ? notifs[0].id : null;
+                const savedN = localStorage.getItem(notifKey);
+                if (latestN) {
+                    if (savedN !== null && Number(latestN) > Number(savedN)) {
+                        showStudentToast('You have new laundry notifications.', 'success');
+                    }
+                    localStorage.setItem(notifKey, String(latestN));
+                }
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+
+    check();
+    setInterval(check, 30000);
+})();
+
+(function ensureVtopSession() {
+    const mode = localStorage.getItem('studentLoginMode');
+    if (mode !== 'vtop') return;
+
+    async function verify() {
+        try {
+            const r = await fetch('/vtop/session-check');
+            if (!r.ok) return;
+            const data = await r.json();
+            if (data && data.vtop && !data.valid) {
+                studentPortalLogout();
+            }
+        } catch (e) {
+        }
+    }
+
+    verify();
+    setInterval(verify, 8000);
+})();
+
+(function ensureServerBootId() {
+    async function verifyBoot() {
+        try {
+            const r = await fetch('/api/health');
+            if (!r.ok) return;
+            const data = await r.json();
+            const bootId = data && (data.bootId || data.boot_id);
+            if (!bootId) return;
+            const stored = localStorage.getItem('serverBootId');
+            if (stored && stored !== bootId) {
+                studentPortalLogout();
+                return;
+            }
+            localStorage.setItem('serverBootId', bootId);
+        } catch (e) {
+        }
+    }
+
+    verifyBoot();
+    setInterval(verifyBoot, 10000);
+})();
+</script>
+{% endblock %}

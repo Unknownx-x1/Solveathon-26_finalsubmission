@@ -1,0 +1,19 @@
+{% extends "student/student_layout.html" %}
+
+{% block student_content %}
+<div class="space-y-6 max-w-md mx-auto">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Laundry Submission</h1>
+        <p class="text-sm text-gray-500 mt-1">Laundry is submitted by staff after scanning your QR.</p>
+    </div>
+
+    <div class="bg-white border border-blue-100 rounded-lg shadow-sm p-6 text-sm text-blue-700">
+        Please bring your laundry bag to the staff on your scheduled day. The staff will scan your QR and update the status.
+        <div class="mt-2 text-gray-500 text-xs">Special instructions can be shared with staff at the time of collection.</div>
+    </div>
+
+    <a href="/student" class="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+        Back to Home
+    </a>
+</div>
+{% endblock %}

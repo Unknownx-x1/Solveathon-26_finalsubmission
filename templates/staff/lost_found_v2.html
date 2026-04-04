@@ -1,0 +1,134 @@
+{% extends "staff/staff_layout.html" %}
+
+{% block staff_content %}
+<div class="space-y-6 max-w-6xl">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Lost &amp; Found</h1>
+        <p class="text-sm text-gray-500 mt-1">Only bags marked as lost or found appear here. Staff can mark a lost bag as found once it is recovered.</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900">Shared Queue</h2>
+                <p class="text-sm text-gray-500 mt-1">Tracked, lost, and found items stay visible until the student marks the laundry as picked up.</p>
+            </div>
+            <div class="flex items-center gap-2">
+                <select id="status-filter" class="border border-gray-300 rounded-md p-2 text-sm">
+                    <option value="">All</option>
+                    <option value="tracked">Tracked</option>
+                    <option value="lost">Lost</option>
+                    <option value="found">Found</option>
+                </select>
+                <button id="refresh-items" class="px-3 py-2 rounded-md border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Refresh</button>
+            </div>
+        </div>
+
+        <div id="found-item-feedback" class="hidden mt-4 rounded-lg p-3 text-sm font-medium"></div>
+        <div id="staff-items" class="mt-6 space-y-4"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const feedback = document.getElementById('found-item-feedback');
+    const itemsContainer = document.getElementById('staff-items');
+    const statusFilter = document.getElementById('status-filter');
+
+    function setFeedback(message, tone) {
+        feedback.textContent = message;
+        feedback.className = 'mt-4 rounded-lg p-3 text-sm font-medium';
+        if (tone === 'success') {
+            feedback.classList.add('bg-green-50', 'text-green-700', 'border', 'border-green-200');
+        } else {
+            feedback.classList.add('bg-red-50', 'text-red-700', 'border', 'border-red-200');
+        }
+        feedback.classList.remove('hidden');
+    }
+
+    function badgeClass(status) {
+        if (status === 'found') return 'bg-green-50 text-green-700 border-green-200';
+        if (status === 'lost') return 'bg-red-50 text-red-700 border-red-200';
+        return 'bg-blue-50 text-blue-700 border-blue-200';
+    }
+
+    function renderItems(items) {
+        if (!items.length) {
+            itemsContainer.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 p-8 text-center text-sm text-gray-500">No records for this filter.</div>';
+            return;
+        }
+
+        itemsContainer.innerHTML = items.map((item) => {
+            const canMarkFound = item.status === 'lost' || item.status === 'tracked';
+            return `
+                <article class="rounded-xl border border-gray-200 p-4">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900">Token ${item.tokenNumber}</h3>
+                            <p class="text-xs text-gray-500 mt-1">${item.studentName || 'No linked student'}${item.studentRegNo ? ' • ' + item.studentRegNo : ''}</p>
+                        </div>
+                        <span class="rounded-full border px-3 py-1 text-xs font-semibold uppercase tracking-wide ${badgeClass(item.status)}">${item.status}</span>
+                    </div>
+                    <div class="mt-4 flex items-center gap-4">
+                        <img src="${item.imageUrl}" alt="Lost and found item" class="h-20 w-20 rounded-lg object-cover border border-gray-200">
+                        <div class="text-sm text-gray-500">
+                            <p>Token ${item.tokenNumber}</p>
+                            <p>${new Date(item.createdAt).toLocaleString()}</p>
+                            <p>${item.description || 'Laundry bag registered from token generation.'}</p>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        ${canMarkFound ? `<button data-item-id="${item.id}" class="mark-found-btn inline-flex items-center px-4 py-2 rounded-md bg-green-600 text-white text-sm font-medium hover:bg-green-700">Mark as Found</button>` : '<p class="text-sm text-green-700">This item is already marked as found.</p>'}
+                    </div>
+                </article>
+            `;
+        }).join('');
+
+        itemsContainer.querySelectorAll('.mark-found-btn').forEach((button) => {
+            button.addEventListener('click', async function () {
+                try {
+                    const response = await fetch('/lost-found/' + button.getAttribute('data-item-id') + '/status', {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ status: 'found' })
+                    });
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        throw new Error(payload.error || 'Could not mark item as found');
+                    }
+                    setFeedback(payload.message || 'Item marked as found.', 'success');
+                    loadItems();
+                } catch (error) {
+                    setFeedback(error.message, 'error');
+                }
+            });
+        });
+    }
+
+    async function loadItems() {
+        itemsContainer.innerHTML = '<div class="rounded-lg border border-gray-200 p-6 text-sm text-gray-500">Loading items...</div>';
+        const search = new URLSearchParams();
+        if (statusFilter.value) {
+            search.set('status', statusFilter.value);
+        }
+
+        try {
+            const response = await fetch('/lost-found?' + search.toString());
+            const items = await response.json();
+            if (!response.ok) {
+                throw new Error(items.error || 'Failed to load lost & found items');
+            }
+            renderItems(items);
+        } catch (error) {
+            itemsContainer.innerHTML = '<div class="rounded-lg border border-red-200 bg-red-50 p-6 text-sm text-red-700">' + error.message + '</div>';
+        }
+    }
+
+    document.getElementById('refresh-items').addEventListener('click', loadItems);
+    statusFilter.addEventListener('change', loadItems);
+    loadItems();
+})();
+</script>
+{% endblock %}

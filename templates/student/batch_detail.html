@@ -1,0 +1,165 @@
+{% extends "student/student_layout.html" %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+{% endblock %}
+
+{% block student_content %}
+<div id="loading-batch" class="flex items-center justify-center py-24">
+    <svg class="animate-spin h-8 w-8 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+</div>
+
+<div id="batch-not-found" class="hidden text-center py-16 text-gray-500">Batch not found</div>
+
+<div id="batch-view" class="hidden space-y-6 max-w-lg mx-auto">
+    <a href="/student" class="inline-flex items-center text-sm text-gray-500 hover:text-gray-900 -ml-2 p-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+        Back to Home
+    </a>
+
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 id="batch-title" class="text-2xl font-bold text-gray-900"></h1>
+            <p id="batch-date" class="text-sm text-gray-500 mt-1"></p>
+        </div>
+        <span id="batch-status-badge" class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800"></span>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6 flex flex-col items-center gap-3">
+        <h3 class="text-base font-semibold text-gray-900 w-full">Batch QR Code</h3>
+        <div class="bg-white p-4 rounded-lg border border-gray-200">
+            <canvas id="batch-qr-canvas"></canvas>
+        </div>
+        <p class="text-xs text-gray-400 text-center">Show this to staff to update batch status</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+        <h3 class="text-base font-semibold text-gray-900 mb-6">Status Timeline</h3>
+        <div id="timeline-list" class="space-y-6">
+            <!-- Timeline items will be loaded here -->
+        </div>
+    </div>
+
+    <div id="notes-card" class="hidden bg-white border border-gray-200 rounded-lg shadow-sm p-6">
+        <h3 class="text-base font-semibold text-gray-900 mb-2">Notes</h3>
+        <p id="batch-notes" class="text-sm text-gray-500"></p>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const batchId = "{{ batch_id }}";
+    const STATUS_ORDER = ["booked", "pending", "collected", "washing", "washed", "pickedUp"];
+    const STATUS_LABELS = {
+        "booked": "Booked",
+        "pending": "Pending",
+        "collected": "Submitted",
+        "washing": "Washing",
+        "washed": "Ready",
+        "pickedUp": "Picked Up"
+    };
+
+    async function initBatchDetail() {
+        try {
+            const res = await fetch(`/api/batches/${batchId}`);
+            if (!res.ok) {
+                document.getElementById('loading-batch').classList.add('hidden');
+                document.getElementById('batch-not-found').classList.remove('hidden');
+                return;
+            }
+            const batch = await res.json();
+            const createdAt = batch.createdAt || batch.created_at;
+            const collectedAt = batch.collectedAt || batch.collected_at;
+            const washedAt = batch.washedAt || batch.washed_at;
+            const pickedUpAt = batch.pickedUpAt || batch.picked_up_at;
+
+            // Fill basic info
+            document.getElementById('batch-title').textContent = `Batch #${batch.id}`;
+            const submittedAt = collectedAt || createdAt;
+            const datePrefix = (batch.status === 'booked' || batch.status === 'pending') ? 'Booked' : 'Submitted';
+            document.getElementById('batch-date').textContent = `${datePrefix} ${submittedAt ? new Date(submittedAt).toLocaleDateString('en-IN') : '-'}`;
+            
+            const colors = {
+                'booked': 'bg-sky-100 text-sky-800 border-sky-200',
+                'pending': 'bg-gray-100 text-gray-800 border-gray-200',
+                'collected': 'bg-blue-100 text-blue-800 border-blue-200',
+                'washing': 'bg-amber-100 text-amber-800 border-amber-200',
+                'washed': 'bg-green-100 text-green-800 border-green-200',
+                'pickedUp': 'bg-slate-100 text-slate-600 border-slate-200'
+            };
+            const labels = {
+                'booked': 'Booked',
+                'pending': 'Pending',
+                'collected': 'Submitted',
+                'washing': 'Washing',
+                'washed': 'Ready',
+                'pickedUp': 'Picked Up'
+            };
+            const badge = document.getElementById('batch-status-badge');
+            badge.textContent = labels[batch.status] || batch.status;
+            badge.className = `px-2.5 py-0.5 rounded-full text-[0.65rem] font-bold uppercase tracking-wider border ${colors[batch.status] || colors.pending}`;
+
+            // QR Code
+            QRCode.toCanvas(document.getElementById('batch-qr-canvas'), batch.qrCode, { width: 160 }, function (error) {
+                if (error) console.error(error);
+            });
+
+            // Timeline
+            const currentStatusIndex = STATUS_ORDER.indexOf(batch.status);
+            const timelineList = document.getElementById('timeline-list');
+            
+            timelineList.innerHTML = STATUS_ORDER.map((status, idx) => {
+                const isCompleted = idx <= currentStatusIndex;
+                const isCurrent = idx === currentStatusIndex;
+                let timestamp = null;
+                if (status === 'pending') timestamp = createdAt;
+                if (status === 'collected') timestamp = collectedAt;
+                if (status === 'washed') timestamp = washedAt;
+                if (status === 'pickedUp') timestamp = pickedUpAt;
+
+                return `
+                    <div class="flex items-center gap-4 relative">
+                        <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center z-10 ${isCompleted ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-300'}">
+                            ${isCompleted ? `
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                </svg>
+                            ` : `
+                                <div class="w-2.5 h-2.5 rounded-full bg-gray-300"></div>
+                            `}
+                        </div>
+                        <div class="flex-1">
+                            <p class="text-sm font-medium ${isCurrent ? 'text-blue-600' : isCompleted ? 'text-gray-900' : 'text-gray-400'}">
+                                ${STATUS_LABELS[status]}
+                                ${isCurrent ? '<span class="ml-2 text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded-full uppercase font-bold">Current</span>' : ''}
+                            </p>
+                            ${timestamp ? `<p class="text-xs text-gray-500">${new Date(timestamp).toLocaleString()}</p>` : ''}
+                        </div>
+                        ${idx < STATUS_ORDER.length - 1 ? `<div class="absolute left-4 top-8 w-0.5 h-6 -ml-[1px] ${isCompleted && idx < currentStatusIndex ? 'bg-blue-600' : 'bg-gray-100'}"></div>` : ''}
+                    </div>
+                `;
+            }).join('');
+
+            // Notes
+            if (batch.notes) {
+                document.getElementById('notes-card').classList.remove('hidden');
+                document.getElementById('batch-notes').textContent = batch.notes;
+            }
+
+            document.getElementById('loading-batch').classList.add('hidden');
+            document.getElementById('batch-view').classList.remove('hidden');
+
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    initBatchDetail();
+</script>
+{% endblock %}

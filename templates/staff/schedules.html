@@ -1,0 +1,179 @@
+{% extends "staff/staff_layout.html" %}
+
+{% block staff_content %}
+<div class="space-y-6">
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900 tracking-tight">Booking Board</h1>
+            <p class="text-sm text-gray-500 mt-1">Manage and track student laundry reservations</p>
+        </div>
+        <div class="flex gap-3 items-center bg-white p-2 rounded-xl border border-gray-200 shadow-sm">
+            <label class="text-xs font-bold text-gray-400 uppercase ml-2">Filter Date</label>
+            <input type="date" id="filter-date" class="border-0 bg-transparent rounded-md p-1 text-sm font-semibold focus:ring-0">
+        </div>
+    </div>
+
+    <div id="loading-bookings" class="flex flex-col items-center justify-center py-24 space-y-4">
+        <div class="relative w-12 h-12">
+            <div class="absolute inset-0 border-4 border-blue-100 rounded-full"></div>
+            <div class="absolute inset-0 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+        </div>
+        <p class="text-gray-400 text-sm font-medium">Scanning reservations...</p>
+    </div>
+
+    <div id="bookings-list" class="space-y-8 pb-12"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadBookings() {
+    const loader = document.getElementById('loading-bookings');
+    const container = document.getElementById('bookings-list');
+    
+    loader.classList.remove('hidden');
+    container.innerHTML = '';
+    
+    try {
+        const res = await fetch('/api/batches');
+        const bookings = await res.json();
+        
+        let validBookings = (bookings || []).filter(b => b.scheduledDate);
+        
+        const filterDate = document.getElementById('filter-date').value;
+        if (filterDate) {
+            validBookings = validBookings.filter(b => b.scheduledDate === filterDate);
+        }
+
+        if (validBookings.length === 0) {
+            container.innerHTML = `
+                <div class="rounded-2xl border-2 border-dashed border-gray-200 p-20 text-center bg-white/50">
+                    <div class="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-gray-900 font-bold">No bookings found</h3>
+                    <p class="text-gray-400 text-sm mt-1">Try selecting a different date or check back later.</p>
+                </div>`;
+            loader.classList.add('hidden');
+            return;
+        }
+
+        // Group by Date, then by Slot
+        const byDate = {};
+        validBookings.forEach(b => {
+            const date = b.scheduledDate;
+            if (!byDate[date]) byDate[date] = {};
+            const slot = b.timeSlot || 'Unscheduled Slot';
+            if (!byDate[date][slot]) byDate[date][slot] = [];
+            byDate[date][slot].push(b);
+        });
+
+        const sortedDates = Object.keys(byDate).sort((a,b) => a.localeCompare(b));
+        
+        container.innerHTML = sortedDates.map(date => {
+            const displayDate = new Date(date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+            
+            const slots = byDate[date];
+            const sortedSlots = Object.keys(slots).sort();
+            
+            const slotsHtml = sortedSlots.map(slot => {
+                const bList = slots[slot];
+                const rows = bList.map(b => `
+                    <div class="group flex items-center justify-between py-3 px-4 rounded-xl hover:bg-white hover:shadow-sm transition-all border border-transparent hover:border-gray-100">
+                        <div class="flex items-center gap-4">
+                            <div class="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 font-bold text-sm">
+                                ${b.student ? b.student.name.charAt(0) : '?'}
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-gray-900 text-sm">${b.student ? b.student.name : 'Unknown Student'}</h4>
+                                <div class="flex items-center gap-2 mt-0.5">
+                                    <span class="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Floor ${b.student ? b.student.floor : '-'} • Room ${b.student ? b.student.roomNumber : '-'}</span>
+                                    <span class="w-1 h-1 rounded-full bg-gray-200"></span>
+                                    <span class="font-mono text-[10px] text-blue-500 font-bold">${b.token}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-4">
+                             <span class="inline-flex rounded-lg border px-3 py-1.5 text-xs font-bold ${
+                                b.status === 'booked' ? 'bg-sky-50 text-sky-700 border-sky-200' :
+                                b.status === 'collected' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                b.status === 'washing' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                b.status === 'washed' ? 'bg-green-50 text-green-700 border-green-200' :
+                                'bg-slate-50 text-slate-700 border-slate-200'
+                             }">${
+                                b.status === 'booked' ? 'Booked' :
+                                b.status === 'collected' ? 'Submitted' :
+                                b.status === 'washing' ? 'Washing' :
+                                b.status === 'washed' ? 'Ready' :
+                                'Picked Up'
+                             }</span>
+                        </div>
+                    </div>
+                `).join('');
+                
+                return `
+                    <div class="mb-6 last:mb-0">
+                        <div class="flex items-center gap-3 mb-4">
+                            <span class="text-xs font-black text-gray-400 uppercase tracking-widest">${slot}</span>
+                            <div class="flex-1 h-px bg-gray-100"></div>
+                            <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-600 border border-blue-100">${bList.length} Bookings</span>
+                        </div>
+                        <div class="space-y-1">
+                            ${rows}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            return `
+                <div class="bg-gray-50/50 border border-gray-200 rounded-3xl p-6 shadow-sm">
+                    <div class="flex items-center justify-between mb-8">
+                        <div>
+                            <h2 class="text-xl font-black text-gray-900">${displayDate}</h2>
+                            <p class="text-[10px] font-bold text-gray-400 uppercase mt-0.5 tracking-widest">Master Daily Schedule</p>
+                        </div>
+                        <div class="w-12 h-12 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-200">
+                             <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="">
+                        ${slotsHtml}
+                    </div>
+                </div>
+            `;
+        }).join('');
+        
+    } catch(err) {
+        console.error(err);
+        container.innerHTML = `<div class="p-8 text-center text-red-500 font-bold bg-red-50 rounded-2xl border border-red-100">An error occurred while loading bookings.</div>`;
+    } finally {
+        loader.classList.add('hidden');
+    }
+}
+
+document.getElementById('filter-date').addEventListener('change', loadBookings);
+
+loadBookings();
+</script>
+<style>
+    /* Custom scrollbar for better feel */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+        background: #e2e8f0;
+        border-radius: 10px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: #cbd5e0;
+    }
+</style>
+{% endblock %}

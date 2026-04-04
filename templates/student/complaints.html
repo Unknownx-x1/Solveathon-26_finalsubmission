@@ -1,0 +1,91 @@
+{% extends "student/student_layout.html" %}
+
+{% block student_content %}
+<div class="space-y-6 max-w-3xl">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Complaints</h1>
+        <p class="text-sm text-gray-500 mt-1">Raise issues to laundry staff.</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+        <form id="complaint-form" class="space-y-3">
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Subject</label>
+                <input id="subject" required class="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm" placeholder="Laundry delay">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700">Message</label>
+                <textarea id="message" required rows="4" class="mt-1 w-full rounded-md border border-gray-300 p-2 text-sm" placeholder="Describe your issue"></textarea>
+            </div>
+            <button class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">Submit Complaint</button>
+            <p id="form-msg" class="text-xs"></p>
+        </form>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm p-5">
+        <h2 class="font-semibold text-gray-900 mb-3">My Complaints</h2>
+        <div id="complaints-list" class="space-y-3"></div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    const sid = localStorage.getItem('studentId');
+    if (!sid) {
+        window.location.replace('/student/register');
+        return;
+    }
+
+    async function loadComplaints() {
+        const res = await fetch('/api/complaints?studentId=' + encodeURIComponent(sid));
+        const rows = res.ok ? await res.json() : [];
+        const list = document.getElementById('complaints-list');
+        if (!rows.length) {
+            list.innerHTML = '<div class="rounded-lg border border-dashed border-gray-300 p-4 text-center text-sm text-gray-500">No complaints yet.</div>';
+            return;
+        }
+        list.innerHTML = rows.map(r => `
+            <div class="rounded-lg border border-gray-200 p-3">
+                <div class="flex items-center justify-between gap-2">
+                    <p class="font-medium text-gray-900">${r.subject}</p>
+                    <span class="rounded-full px-2 py-0.5 text-xs ${r.status === 'resolved' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}">${r.status}</span>
+                </div>
+                <p class="text-sm text-gray-700 mt-1">${r.message}</p>
+                <p class="text-xs text-gray-400 mt-1">${new Date(r.created_at || r.createdAt).toLocaleString('en-IN')}</p>
+            </div>
+        `).join('');
+    }
+
+    document.getElementById('complaint-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const msg = document.getElementById('form-msg');
+        msg.className = 'text-xs text-blue-600';
+        msg.textContent = 'Submitting...';
+        const payload = {
+            studentId: Number(sid),
+            subject: document.getElementById('subject').value.trim(),
+            message: document.getElementById('message').value.trim()
+        };
+        const res = await fetch('/api/complaints', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const out = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            msg.className = 'text-xs text-red-600';
+            msg.textContent = out.error || 'Could not submit complaint.';
+            return;
+        }
+        msg.className = 'text-xs text-green-600';
+        msg.textContent = 'Complaint submitted.';
+        document.getElementById('complaint-form').reset();
+        loadComplaints();
+    });
+
+    loadComplaints();
+})();
+</script>
+{% endblock %}

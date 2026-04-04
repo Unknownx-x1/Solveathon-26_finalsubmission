@@ -1,0 +1,172 @@
+﻿{% extends "staff/staff_layout.html" %}
+
+{% block staff_content %}
+<div class="space-y-6">
+    <div class="flex items-center justify-between flex-wrap gap-3">
+        <h1 class="text-2xl font-bold text-gray-900">Laundry History</h1>
+    </div>
+
+    <div class="relative">
+        <svg xmlns="http://www.w3.org/2000/svg" class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+        </svg>
+        <input type="text" id="student-search" placeholder="Search by name, reg no, room, token..." class="pl-9 block w-full border border-gray-300 rounded-md shadow-sm p-2 text-sm focus:ring-blue-500 focus:border-blue-500">
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <section class="bg-white rounded-lg border border-blue-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-blue-50 border-b border-blue-100"><h2 class="font-semibold text-blue-800">Submitted</h2></div>
+            <div id="list-collected" class="divide-y divide-gray-100"></div>
+        </section>
+        <section class="bg-white rounded-lg border border-amber-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-amber-50 border-b border-amber-100"><h2 class="font-semibold text-amber-800">Washing</h2></div>
+            <div id="list-washing" class="divide-y divide-gray-100"></div>
+        </section>
+        <section class="bg-white rounded-lg border border-green-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-green-50 border-b border-green-100"><h2 class="font-semibold text-green-800">Ready</h2></div>
+            <div id="list-washed" class="divide-y divide-gray-100"></div>
+        </section>
+        <section class="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden">
+            <div class="px-4 py-3 bg-slate-50 border-b border-slate-100"><h2 class="font-semibold text-slate-800">Picked Up</h2></div>
+            <div id="list-picked-up" class="divide-y divide-gray-100"></div>
+        </section>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allStudents = [];
+let allBatches = [];
+let searchQuery = '';
+
+function idOfBatch(b) { return b.studentId ?? b.student_id; }
+function createdOfBatch(b) { return b.createdAt || b.created_at; }
+function tokenOfBatch(b) { return b.token || '-'; }
+
+function latestBatchForStudent(studentId) {
+    const list = allBatches
+        .filter(b => idOfBatch(b) === studentId)
+        .sort((a, b) => new Date(createdOfBatch(b) || 0) - new Date(createdOfBatch(a) || 0));
+    return list.length ? list[0] : null;
+}
+
+function matchesSearch(s, batch) {
+    if (!searchQuery) return true;
+    const q = searchQuery;
+    return (s.name || '').toLowerCase().includes(q) ||
+           (s.regNo || '').toLowerCase().includes(q) ||
+           (s.roomNumber || '').toLowerCase().includes(q) ||
+           String((batch && tokenOfBatch(batch)) || s.token || '').toLowerCase().includes(q);
+}
+
+function studentRow(s, batch, tone) {
+    const token = batch ? tokenOfBatch(batch) : (s.token || '-');
+    const toneCls = {
+        blue: 'bg-blue-50 border-blue-100',
+        amber: 'bg-amber-50 border-amber-100',
+        green: 'bg-green-50 border-green-100',
+        slate: 'bg-slate-50 border-slate-100'
+    }[tone] || 'bg-gray-50 border-gray-100';
+    const status = batch ? batch.status : null;
+    const statusLabel = status === 'booked' ? 'Booked'
+        : status === 'collected' ? 'Submitted'
+        : status === 'washing' ? 'Washing'
+        : status === 'washed' ? 'Ready'
+        : status === 'pickedUp' ? 'Picked Up'
+        : 'No Batch';
+
+    return `
+        <div class="p-3 border-l-4 ${toneCls}">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <p class="text-sm font-semibold text-gray-900">${s.name}</p>
+                    <p class="text-xs text-gray-500">${s.regNo} • Floor ${s.floor} • Room ${s.roomNumber}</p>
+                    <p class="text-xs text-gray-500 mt-1">Token <span class="font-mono font-semibold">${token}</span></p>
+                    <p class="text-xs text-gray-500 mt-1">Status <span class="font-semibold text-gray-700">${statusLabel}</span></p>
+                </div>
+                <a href="/staff/students/${s.id}" class="inline-flex items-center p-2 text-gray-400 hover:text-blue-600" title="View details">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                </a>
+                <button onclick="handleDelete(${s.id}, this.dataset.name)" data-name="${String(s.name || '').replace(/"/g, '&quot;')}" class="inline-flex items-center p-2 text-gray-400 hover:text-red-600" title="Delete student">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                </button>
+            </div>
+        </div>
+    `;
+}
+
+function renderSection(elId, rows, emptyText) {
+    const el = document.getElementById(elId);
+    if (!rows.length) {
+        el.innerHTML = `<div class="p-6 text-sm text-center text-gray-500">${emptyText}</div>`;
+        return;
+    }
+    el.innerHTML = rows.join('');
+}
+
+function renderHistory() {
+    const collectedRows = [];
+    const washingRows = [];
+    const washedRows = [];
+    const pickedUpRows = [];
+
+    for (const s of allStudents) {
+        const batch = latestBatchForStudent(s.id);
+        if (!matchesSearch(s, batch)) continue;
+
+        const status = batch ? batch.status : null;
+        if (status === 'washing') {
+            washingRows.push(studentRow(s, batch, 'amber'));
+        } else if (status === 'washed') {
+            washedRows.push(studentRow(s, batch, 'green'));
+        } else if (status === 'pickedUp') {
+            pickedUpRows.push(studentRow(s, batch, 'slate'));
+        } else {
+            collectedRows.push(studentRow(s, batch, 'blue'));
+        }
+    }
+
+    renderSection('list-collected', collectedRows, 'No students in submitted');
+    renderSection('list-washing', washingRows, 'No students in washing');
+    renderSection('list-washed', washedRows, 'No students in ready');
+    renderSection('list-picked-up', pickedUpRows, 'No students in picked up');
+}
+
+async function handleDelete(id, name) {
+    if (!confirm(`Delete ${name}? This will also delete all their laundry batches.`)) return;
+    try {
+        const res = await fetch(`/api/students/${id}`, { method: 'DELETE' });
+        if (res.ok) {
+            loadStudents();
+        } else {
+            alert('Failed to delete student');
+        }
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function loadStudents() {
+    try {
+        const [studentsRes, batchesRes] = await Promise.all([
+            fetch('/api/students'),
+            fetch('/api/batches')
+        ]);
+        allStudents = studentsRes.ok ? await studentsRes.json() : [];
+        allBatches = batchesRes.ok ? await batchesRes.json() : [];
+        renderHistory();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+document.getElementById('student-search').addEventListener('input', (e) => {
+    searchQuery = (e.target.value || '').toLowerCase().trim();
+    renderHistory();
+});
+
+loadStudents();
+setInterval(loadStudents, 15000);
+</script>
+{% endblock %}

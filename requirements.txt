@@ -1,0 +1,19 @@
+flask
+flask-sqlalchemy
+flask-cors
+qrcode
+python-dotenv
+flask-marshmallow
+marshmallow-sqlalchemy
+requests
+beautifulsoup4
+itsdangerous
+gunicorn
+
+# Schedule OCR upload (image/PDF)
+easyocr
+opencv-python-headless
+pillow
+pdf2image
+numpy
+psycopg2-binary

@@ -1,0 +1,117 @@
+{% extends "staff/staff_layout.html" %}
+
+{% block staff_content %}
+<div class="space-y-6 max-w-2xl">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
+        <p class="text-sm text-gray-500 mt-1">System configuration for staff</p>
+    </div>
+
+    <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+        <div class="p-6 border-b border-gray-200">
+            <h3 class="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <span id="settings-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                </span>
+                Student Profile Edit Window
+            </h3>
+            <p class="text-sm text-gray-500 mt-2">
+                When open, students can update their name, floor, room number, and phone number.
+                When closed, profiles are locked and cannot be edited by students.
+            </p>
+        </div>
+        <div class="p-6 space-y-4">
+            <div id="loading-settings" class="flex items-center gap-2">
+                <svg class="animate-spin h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="text-sm text-gray-500">Loading...</span>
+            </div>
+
+            <div id="settings-controls" class="hidden flex items-center gap-4">
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="edit-window-switch" class="sr-only peer">
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:width-5 after:transition-all peer-checked:bg-blue-600"></div>
+                </label>
+                <div>
+                    <label id="switch-label" class="text-sm font-medium text-gray-900 cursor-pointer"></label>
+                    <p id="last-updated" class="text-xs text-gray-500 mt-0.5"></p>
+                </div>
+            </div>
+
+            <div id="settings-banner" class="hidden rounded-lg p-3 text-sm font-medium"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let currentSettings = null;
+
+    async function loadSettings() {
+        try {
+            const res = await fetch('/api/settings');
+            currentSettings = await res.json();
+            renderSettings();
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    function renderSettings() {
+        const controls = document.getElementById('settings-controls');
+        const loader = document.getElementById('loading-settings');
+        const sw = document.getElementById('edit-window-switch');
+        const label = document.getElementById('switch-label');
+        const lastUpdated = document.getElementById('last-updated');
+        const banner = document.getElementById('settings-banner');
+        const icon = document.getElementById('settings-icon');
+
+        loader.classList.add('hidden');
+        controls.classList.remove('hidden');
+
+        sw.checked = currentSettings.editWindowOpen;
+        label.textContent = currentSettings.editWindowOpen ? "Edit Window is OPEN" : "Edit Window is CLOSED";
+        lastUpdated.textContent = `Last updated: ${new Date(currentSettings.updatedAt).toLocaleString()}`;
+
+        if (currentSettings.editWindowOpen) {
+            banner.textContent = "Students can currently edit their profile details.";
+            banner.classList.add('bg-green-50', 'border', 'border-green-200', 'text-green-800');
+            banner.classList.remove('bg-gray-100', 'border-gray-200', 'text-gray-500', 'hidden');
+            icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A9 9 0 112.862 5.39c.73-.374 1.548-.654 2.41-.826a1.99 1.99 0 001.077-.384l.215-.14a2.003 2.003 0 012.35 0l.215.14c.312.203.684.332 1.077.384.862.172 1.68.452 2.41.826a1.99 1.99 0 01.896 1.117l.067.247a2.008 2.008 0 001.22 1.353l.255.088c.834.288 1.583.744 2.195 1.334a1.99 1.99 0 01.554 1.332l.006.271c.005.215.05.424.133.618a8.956 8.956 0 01-.013 7.025" /></svg>`;
+        } else {
+            banner.textContent = "Student profile editing is currently disabled.";
+            banner.classList.add('bg-gray-100', 'border', 'border-gray-200', 'text-gray-500');
+            banner.classList.remove('bg-green-50', 'border-green-200', 'text-green-800', 'hidden');
+            icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>`;
+        }
+    }
+
+    document.getElementById('edit-window-switch').addEventListener('change', async (e) => {
+        const checked = e.target.checked;
+        try {
+            const res = await fetch('/api/settings', {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ editWindowOpen: checked })
+            });
+            if (res.ok) {
+                currentSettings = await res.json();
+                renderSettings();
+            } else {
+                alert("Failed to update settings");
+                e.target.checked = !checked;
+            }
+        } catch (err) {
+            console.error(err);
+            e.target.checked = !checked;
+        }
+    });
+
+    loadSettings();
+</script>
+{% endblock %}

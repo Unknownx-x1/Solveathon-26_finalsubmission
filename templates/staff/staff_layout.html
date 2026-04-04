@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 flex flex-col md:flex-row">
+    <!-- Mobile Header -->
+    <div class="md:hidden flex items-center justify-between p-4 bg-white border-b border-gray-200 shadow-sm">
+        <div class="flex items-center gap-2">
+            <img src="{{ url_for('static', filename='image.png') }}" alt="Logo" class="h-8">
+            <span class="font-bold text-gray-900 tracking-tight">Staff Portal</span>
+        </div>
+        <button id="staff-mobile-menu-btn" class="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+        </button>
+    </div>
+
+    <!-- Sidebar -->
+    <aside id="staff-sidebar" class="hidden md:flex flex-col w-full md:w-64 bg-white sidebar-shadow border-r border-gray-200 transition-all duration-300 z-40 fixed md:relative h-screen">
+        <div class="p-6 flex-1 flex flex-col h-full">
+            <div class="mb-10 hidden md:block">
+                <img src="{{ url_for('static', filename='image.png') }}" alt="VIT Logo" class="w-full object-contain">
+                <div class="h-1 w-12 bg-blue-600 rounded-full mt-4"></div>
+            </div>
+
+            <!-- Staff Profile Section -->
+            <div class="mb-8 p-4 bg-gray-50 rounded-xl flex items-center gap-3 border border-gray-100 shadow-sm">
+                <div class="w-10 h-10 bg-gray-900 rounded-full flex items-center justify-center text-white font-bold text-lg">L</div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-gray-900 truncate">Laundry Manager</p>
+                    <p class="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Administrator</p>
+                </div>
+            </div>
+
+            <nav class="space-y-1 overflow-y-auto">
+                <a href="/staff" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+                    </svg>
+                    Dashboard
+                </a>
+                <a href="/staff/scan" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/scan' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Status Update
+                </a>
+                <a href="/staff/students" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/students' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" />
+                    </svg>
+                    Laundry History
+                </a>
+                <a href="/staff/schedules" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/schedules' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Booking Board
+                </a>
+                <a href="/staff/notifications" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/notifications' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    Announcements
+                </a>
+                <a href="/staff/complaints" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/complaints' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.37-3.196A7.313 7.313 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    Complaints
+                </a>
+                <a href="/staff/lost-found" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-semibold transition-all-custom {% if request.path == '/staff/lost-found' %}nav-item-active shadow-sm{% else %}text-gray-600 hover:bg-gray-50 hover:text-blue-600{% endif %}">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10" />
+                    </svg>
+                    Lost &amp; Found
+                </a>
+            </nav>
+
+            <div class="mt-8">
+                <label class="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3 px-4">Preference</label>
+                <div class="px-4">
+                    <select class="portal-lang-toggle w-full border-0 bg-gray-50 rounded-lg p-2.5 text-xs font-bold text-gray-700 focus:ring-0 cursor-pointer" aria-label="Language">
+                        <option value="en">English (US)</option>
+                        <option value="ta">தமிழ் (Tamil)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        <div class="p-6 border-t border-gray-100">
+            <a href="/" class="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-bold text-red-500 hover:bg-red-50 transition-all-custom">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4-4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+                Exit Portal
+            </a>
+        </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 p-6 md:p-10 lg:p-12 overflow-auto bg-gray-50">
+        {% block staff_content %}{% endblock %}
+    </main>
+</div>
+<script>
+    // Mobile Menu Toggle
+    const mobileMenuBtn = document.getElementById('staff-mobile-menu-btn');
+    const sidebar = document.getElementById('staff-sidebar');
+    
+    if (mobileMenuBtn && sidebar) {
+        mobileMenuBtn.addEventListener('click', () => {
+            sidebar.classList.toggle('hidden');
+            sidebar.classList.toggle('flex');
+        });
+    }
+</script>
+<script src="{{ url_for('static', filename='js/portal_i18n.js') }}"></script>
+{% endblock %}

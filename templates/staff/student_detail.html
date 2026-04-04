@@ -1,0 +1,144 @@
+{% extends "staff/staff_layout.html" %}
+
+{% block staff_content %}
+<div class="space-y-6">
+    <a href="/staff/students" class="inline-flex items-center text-sm text-gray-500 hover:text-gray-900 -ml-2 p-2">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+        </svg>
+        Back to Students
+    </a>
+
+    <div id="loading-student" class="flex items-center justify-center py-24">
+        <svg class="animate-spin h-8 w-8 text-gray-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+    </div>
+
+    <div id="student-view" class="hidden space-y-6">
+        <div class="grid grid-cols-1 gap-6">
+            <div class="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
+                <div class="p-6 border-b border-gray-200 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    <h3 class="text-lg font-bold text-gray-900">Student Profile</h3>
+                </div>
+                <div class="p-6 grid grid-cols-2 gap-6 text-sm">
+                    <div>
+                        <p class="text-gray-500 mb-1">Full Name</p>
+                        <p id="student-name" class="font-semibold text-lg text-gray-900"></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 mb-1 flex items-center gap-1">Reg No</p>
+                        <p id="student-regno" class="font-mono font-bold text-gray-900"></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 mb-1 flex items-center gap-1">Floor</p>
+                        <p id="student-floor" class="font-semibold text-gray-900"></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 mb-1">Room</p>
+                        <p id="student-room" class="font-semibold text-gray-900"></p>
+                    </div>
+                    <div>
+                        <p class="text-gray-500 mb-1 flex items-center gap-1">Phone</p>
+                        <p id="student-phone" class="font-semibold text-gray-900"></p>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <div>
+            <h2 class="text-lg font-semibold mb-4 text-gray-900">Laundry History</h2>
+            <div id="history-table-container" class="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm">
+                <!-- History will be loaded here -->
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const studentId = "{{ student_id }}";
+
+    async function initStudentDetail() {
+        try {
+            const studentRes = await fetch(`/api/students/${studentId}`);
+            if (!studentRes.ok) {
+                document.getElementById('loading-student').innerHTML = `<div class="text-center py-16 text-gray-500">Student not found</div>`;
+                return;
+            }
+            const student = await studentRes.json();
+
+            // Fill info
+            document.getElementById('student-name').textContent = student.name;
+            document.getElementById('student-regno').textContent = student.regNo;
+            document.getElementById('student-floor').textContent = `Floor ${student.floor}`;
+            document.getElementById('student-room').textContent = student.roomNumber;
+            document.getElementById('student-phone').textContent = student.phoneNumber;
+
+            // Load History
+            const batchesRes = await fetch(`/api/batches?studentId=${studentId}`);
+            const batches = await batchesRes.json();
+            
+            const getStatusBadge = (status) => {
+                const colors = {
+                    'pending': 'bg-gray-100 text-gray-800 border-gray-200',
+                    'collected': 'bg-blue-100 text-blue-800 border-blue-200',
+                    'washing': 'bg-amber-100 text-amber-800 border-amber-200',
+                    'washed': 'bg-green-100 text-green-800 border-green-200',
+                    'pickedUp': 'bg-slate-100 text-slate-600 border-slate-200'
+                };
+                const labels = {
+                    'pending': 'Pending',
+                    'collected': 'Submitted',
+                    'washing': 'Washing',
+                    'washed': 'Ready',
+                    'pickedUp': 'Picked Up'
+                };
+                return `<span class="px-2.5 py-0.5 rounded-full text-[0.65rem] font-bold uppercase tracking-wider border ${colors[status] || colors.pending}">${labels[status] || status}</span>`;
+            };
+
+            const container = document.getElementById('history-table-container');
+            if (batches.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center text-gray-500">No laundry batches yet</div>`;
+            } else {
+                let rows = batches.map(b => `
+                    <tr class="hover:bg-gray-50 transition-colors">
+                        <td class="py-3 px-4 font-mono text-gray-900">#${b.id}</td>
+                        <td class="py-3 px-4">${getStatusBadge(b.status)}</td>
+                        <td class="py-3 px-4 text-gray-500">${new Date(b.createdAt).toLocaleDateString()}</td>
+                        <td class="py-3 px-4 text-gray-500">${b.pickedUpAt ? new Date(b.pickedUpAt).toLocaleDateString() : '—'}</td>
+                    </tr>
+                `).join('');
+                
+                container.innerHTML = `
+                    <table class="w-full text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="text-left py-2.5 px-4 font-medium text-gray-500">Batch ID</th>
+                                <th class="text-left py-2.5 px-4 font-medium text-gray-500">Status</th>
+                                <th class="text-left py-2.5 px-4 font-medium text-gray-500">Submitted</th>
+                                <th class="text-left py-2.5 px-4 font-medium text-gray-500">Picked Up</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-gray-200">${rows}</tbody>
+                    </table>
+                `;
+            }
+
+            document.getElementById('loading-student').classList.add('hidden');
+            document.getElementById('student-view').classList.remove('hidden');
+
+        } catch (err) {
+            console.error(err);
+        }
+    }
+
+    initStudentDetail();
+</script>
+{% endblock %}

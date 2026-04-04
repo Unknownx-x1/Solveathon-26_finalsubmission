@@ -1,0 +1,71 @@
+{% extends "student/student_layout.html" %}
+
+{% block student_content %}
+<div class="space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold text-gray-900">Notifications</h1>
+        <p class="text-sm text-gray-500 mt-1">Announcements from staff and updates about your laundry</p>
+    </div>
+
+    <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-gray-900 mb-3">Staff Announcements</h2>
+        <div id="ann-list" class="space-y-2"></div>
+    </section>
+
+    <section class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
+        <h2 class="text-lg font-semibold text-gray-900 mb-3">Your Laundry Updates</h2>
+        <div id="notif-list" class="space-y-2"></div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function () {
+    const sid = localStorage.getItem('studentId');
+    if (!sid) {
+        window.location.replace('/student/register');
+        return;
+    }
+
+    function empty(msg) {
+        return '<div class="rounded-lg border border-dashed border-gray-200 p-6 text-center text-sm text-gray-500">' + msg + '</div>';
+    }
+
+    function fmtTs(value) {
+        const d = value ? new Date(value) : new Date();
+        return Number.isNaN(d.getTime()) ? new Date().toLocaleString() : d.toLocaleString();
+    }
+
+    try {
+        const [annRes, nRes] = await Promise.all([
+            fetch('/api/announcements'),
+            fetch('/api/notifications?studentId=' + encodeURIComponent(sid))
+        ]);
+
+        const anns = annRes.ok ? await annRes.json() : [];
+        const notifs = nRes.ok ? await nRes.json() : [];
+
+        const annEl = document.getElementById('ann-list');
+        const notifEl = document.getElementById('notif-list');
+
+        annEl.innerHTML = anns.length ? anns.map(a =>
+            '<div class="rounded-lg border border-amber-200 bg-amber-50 p-4">' +
+            '<p class="text-sm font-semibold text-amber-900">' + (a.title || '') + '</p>' +
+            '<p class="text-sm text-amber-900/90 mt-1">' + (a.message || '') + '</p>' +
+            '<p class="text-xs text-amber-700 mt-2">' + fmtTs(a.createdAt || a.created_at) + '</p></div>'
+        ).join('') : empty('No announcements yet.');
+
+        notifEl.innerHTML = notifs.length ? notifs.map(n =>
+            '<div class="rounded-lg border border-blue-100 bg-blue-50 p-4">' +
+            '<p class="text-sm font-medium text-blue-900">' + (n.message || '') + '</p>' +
+            '<p class="text-xs text-blue-700 mt-2">' + fmtTs(n.createdAt || n.created_at) + '</p></div>'
+        ).join('') : empty('No personal notifications yet.');
+    } catch (e) {
+        console.error(e);
+        document.getElementById('ann-list').innerHTML = empty('Could not load announcements.');
+        document.getElementById('notif-list').innerHTML = empty('Could not load notifications.');
+    }
+})();
+</script>
+{% endblock %}
