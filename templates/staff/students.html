@@ -116,14 +116,14 @@ function renderHistory() {
         if (!matchesSearch(s, batch)) continue;
 
         const status = batch ? batch.status : null;
-        if (status === 'washing') {
+        if (status === 'collected') {
+            collectedRows.push(studentRow(s, batch, 'blue'));
+        } else if (status === 'washing') {
             washingRows.push(studentRow(s, batch, 'amber'));
         } else if (status === 'washed') {
             washedRows.push(studentRow(s, batch, 'green'));
         } else if (status === 'pickedUp') {
             pickedUpRows.push(studentRow(s, batch, 'slate'));
-        } else {
-            collectedRows.push(studentRow(s, batch, 'blue'));
         }
     }
 

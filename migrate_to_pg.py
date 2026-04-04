@@ -1,6 +1,6 @@
 import os
 from app import app, db
-from models import Student, LaundryBatch, RoomSchedule, SystemSettings, StudentInvite, Notification, Announcement, Complaint, DailyLaundryDetail
+from models import Student, LaundryBatch, RoomSchedule, SystemSettings, StudentInvite, Notification, Announcement, Complaint, DailyLaundryDetail, LaundryRecord, LostFoundItem
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -39,6 +39,7 @@ def migrate():
     with app.app_context():
         print("Creating tables in PostgreSQL...")
         db.create_all()
+        db.create_all(bind_key='daily')
 
         # 4. Migrate Data
         # Order matters for foreign keys: Student -> Others
@@ -137,6 +138,45 @@ def migrate():
                 status=d.status, room_number=d.room_number, notes=d.notes, created_at=d.created_at
             )
             db.session.merge(new_d)
+
+        # --- LaundryRecords ---
+        print("Migrating LaundryRecords...")
+        laundry_records = session_student.execute(db.select(LaundryRecord)).scalars().all()
+        for record in laundry_records:
+            new_record = LaundryRecord(
+                id=record.id,
+                token_number=record.token_number,
+                batch_id=record.batch_id,
+                student_id=record.student_id,
+                student_name=record.student_name,
+                reg_no=record.reg_no,
+                floor=record.floor,
+                room_number=record.room_number,
+                phone_number=record.phone_number,
+                clothes_count=record.clothes_count,
+                weight=record.weight,
+                status=record.status,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+            )
+            db.session.merge(new_record)
+
+        # --- LostFoundItems ---
+        print("Migrating LostFoundItems...")
+        lost_found_items = session_student.execute(db.select(LostFoundItem)).scalars().all()
+        for item in lost_found_items:
+            new_item = LostFoundItem(
+                id=item.id,
+                token_number=item.token_number,
+                student_id=item.student_id,
+                image_url=item.image_url,
+                description=item.description,
+                status=item.status,
+                created_by=item.created_by,
+                archived_at=item.archived_at,
+                created_at=item.created_at,
+            )
+            db.session.merge(new_item)
 
         db.session.commit()
         print("Migration completed successfully!")

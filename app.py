@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, make_response
+from flask import Flask, request, jsonify, render_template, make_response, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from models import db, ma, Student, LaundryBatch, RoomSchedule, SystemSettings, StudentInvite, Notification, Announcement, Complaint, DailyLaundryDetail, LaundryRecord, LostFoundItem, StudentSchema, LaundryBatchSchema, RoomScheduleSchema, SystemSettingsSchema, StudentInviteSchema, NotificationSchema, DailyLaundryDetailSchema, AnnouncementSchema, ComplaintSchema, LaundryRecordSchema, LostFoundItemSchema
@@ -115,7 +115,7 @@ VALID_STATUSES = ["booked", "pending", "collected", "washing", "washed", "picked
 LAUNDRY_RECORD_STATUSES = {"received", "washing", "ready", "delivered"}
 LOST_FOUND_STATUSES = {"tracked", "lost", "found"}
 LOST_FOUND_CREATORS = {"student", "staff"}
-UPLOADS_DIR = os.path.join(basedir, 'static', 'uploads')
+UPLOADS_DIR = os.environ.get('UPLOADS_ROOT', os.path.join(basedir, 'static', 'uploads'))
 OCR_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'ocr')
 LOST_FOUND_UPLOADS_DIR = os.path.join(UPLOADS_DIR, 'lost_found')
 
@@ -361,12 +361,19 @@ def _coerce_archive_flag(value):
     return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 def _build_lost_found_image_url(filename):
-    return f"/static/uploads/lost_found/{filename}"
+    return f"/uploads/lost_found/{filename}"
 
 def _resolve_storage_path_from_url(image_url):
     if not image_url:
         return None
-    relative_path = image_url.lstrip('/').replace('/', os.sep)
+    normalized = str(image_url).strip()
+    if normalized.startswith('/uploads/'):
+        relative_path = normalized[len('/uploads/'):].replace('/', os.sep)
+        return os.path.join(UPLOADS_DIR, relative_path)
+    if normalized.startswith('/static/uploads/'):
+        relative_path = normalized[len('/static/uploads/'):].replace('/', os.sep)
+        return os.path.join(UPLOADS_DIR, relative_path)
+    relative_path = normalized.lstrip('/').replace('/', os.sep)
     return os.path.join(basedir, relative_path)
 
 def _map_batch_status_to_laundry_status(batch_status):
@@ -678,6 +685,10 @@ def student_register():
 @app.route('/student/login', methods=['GET'])
 def student_login():
     return render_template('student/register.html')
+
+@app.route('/uploads/<path:subpath>', methods=['GET'])
+def serve_uploaded_file(subpath):
+    return send_from_directory(UPLOADS_DIR, subpath)
 
 @app.route('/api/dashboard/summary', methods=['GET'])
 def get_dashboard_summary():
