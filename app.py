@@ -355,7 +355,8 @@ def _student_has_bucket_access(student_id):
     return _student_booking_count_current_month(student_id) >= MONTHLY_SLOT_LIMIT
 
 def _students_with_slots_next_7_days():
-    today = datetime.now().date()
+    now = datetime.now()
+    today = now.date()
     end_date = today + timedelta(days=7)
     students = Student.query.join(LaundryBatch, LaundryBatch.student_id == Student.id).filter(
         LaundryBatch.status == 'booked'
@@ -370,7 +371,13 @@ def _students_with_slots_next_7_days():
                 d = datetime.strptime(b.scheduled_date, '%Y-%m-%d').date()
             except Exception:
                 continue
-            if today < d <= end_date and s.id not in seen:
+            if d < today or d > end_date:
+                continue
+            if d == today:
+                slot_end = _slot_end_datetime(b)
+                if slot_end and slot_end <= now:
+                    continue
+            if s.id not in seen:
                 seen.add(s.id)
                 eligible.append(s)
                 break
@@ -2043,7 +2050,8 @@ def _serialize_bucket_request(req, viewer_student_id=None):
         "requester": student_schema.dump(req.requester) if req.requester else None,
         "acceptedBy": student_schema.dump(req.accepted_by) if req.accepted_by else None,
         "myResponse": my_row.response if my_row else None,
-        "canRespond": bool(req.status == 'open' and my_row and my_row.response == 'pending')
+        "canRespond": bool(req.status == 'open' and my_row and my_row.response == 'pending'),
+        "canDelete": bool(req.status == 'open' and viewer_student_id is not None and req.requester_student_id == viewer_student_id)
     }
 
 @app.route('/api/bucket/eligibility', methods=['GET'])
@@ -2204,6 +2212,22 @@ def respond_bucket_request(request_id):
     db.session.commit()
     return jsonify(_serialize_bucket_request(req, student.id)), 200
 
+@app.route('/api/bucket/requests/<int:request_id>', methods=['DELETE'])
+def delete_bucket_request(request_id):
+    student_id = request.args.get('studentId', type=int)
+    if not student_id:
+        return jsonify({"error": "studentId is required"}), 400
+
+    req = BucketRequest.query.get_or_404(request_id)
+    if req.requester_student_id != student_id:
+        return jsonify({"error": "Only the requester can delete this bucket request."}), 403
+    if req.status != 'open':
+        return jsonify({"error": "Only open bucket requests can be deleted."}), 400
+
+    db.session.delete(req)
+    db.session.commit()
+    return jsonify({"deleted": True, "id": request_id}), 200
+
 @app.route('/api/notifications', methods=['GET'])
 def list_notifications():
     student_id = request.args.get('studentId')
@@ -2269,10 +2293,26 @@ def update_complaint(id):
     next_status = str(data.get('status', '')).strip().lower()
     if next_status not in ('open', 'resolved'):
         return jsonify({"error": "status must be open or resolved"}), 400
+    if next_status == 'resolved':
+        db.session.delete(row)
+        db.session.commit()
+        return jsonify({"deleted": True, "id": id}), 200
     row.status = next_status
-    row.resolved_at = datetime.now() if next_status == 'resolved' else None
+    row.resolved_at = None
     db.session.commit()
     return jsonify(complaint_schema.dump(row)), 200
+
+@app.route('/api/batches/<int:id>', methods=['DELETE'])
+def delete_batch(id):
+    batch = LaundryBatch.query.get_or_404(id)
+    if batch.status not in ('booked', 'cancelled'):
+        return jsonify({"error": "Only booked or cancelled reservations can be deleted from the booking board."}), 400
+
+    Notification.query.filter_by(batch_id=batch.id).delete()
+    DailyLaundryDetail.query.filter_by(batch_id=batch.id).delete()
+    db.session.delete(batch)
+    db.session.commit()
+    return jsonify({"deleted": True, "id": id}), 200
 
 @app.route('/api/laundry', methods=['GET'])
 def list_laundry_records():

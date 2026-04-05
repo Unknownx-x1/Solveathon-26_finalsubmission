@@ -49,8 +49,8 @@ def _preprocess_image(image_path):
     image_np = np.array(image)
     height, width = image_np.shape[:2]
     max_side = max(height, width)
-    if max_side > 1400:
-        scale = 1400.0 / max_side
+    if max_side > 1800:
+        scale = 1800.0 / max_side
         image_np = cv2.resize(
             image_np,
             None,
@@ -62,6 +62,7 @@ def _preprocess_image(image_path):
     gray = cv2.GaussianBlur(gray, (3, 3), 0)
     enlarged = cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC)
     _, threshold = cv2.threshold(enlarged, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inverted = cv2.bitwise_not(threshold)
     adaptive = cv2.adaptiveThreshold(
         enlarged,
         255,
@@ -74,6 +75,7 @@ def _preprocess_image(image_path):
         "base": image_np,
         "gray": enlarged,
         "threshold": threshold,
+        "inverted": inverted,
         "adaptive": adaptive,
     }
 
@@ -113,9 +115,9 @@ def _select_best_candidate(candidates):
     if digit_only_candidates:
         filtered = digit_only_candidates
 
-    three_digit_candidates = [item for item in filtered if item["length"] == 3]
-    if three_digit_candidates:
-        filtered = three_digit_candidates
+    preferred_length_candidates = [item for item in filtered if item["length"] in (3, 4)]
+    if preferred_length_candidates:
+        filtered = preferred_length_candidates
 
     ranked = sorted(
         filtered,
@@ -123,7 +125,7 @@ def _select_best_candidate(candidates):
             item["confidence"],
             item["area"],
             item["length"],
-            item["index"],
+            -item["index"],
         ),
     )
     return ranked[-1], filtered
@@ -134,8 +136,10 @@ def extract_token_number(image_path):
     reader = _get_reader()
 
     passes = [
+        processed_images["base"],
         processed_images["threshold"],
         processed_images["gray"],
+        processed_images["inverted"],
         processed_images["adaptive"],
     ]
     all_results = []
@@ -148,7 +152,7 @@ def extract_token_number(image_path):
         best_candidate, chosen_candidates = _select_best_candidate(_extract_candidates(all_results))
         if not best_candidate:
             continue
-        if index == 0 or best_candidate["confidence"] >= _PRIMARY_CONFIDENCE:
+        if best_candidate["confidence"] >= _PRIMARY_CONFIDENCE and best_candidate["length"] in (3, 4):
             break
 
     if not best_candidate:

@@ -192,7 +192,14 @@
                 urgentPanel.classList.add('hidden');
             }
 
-            const activeBatches = (batches || []).filter(b => b.status !== 'pickedUp').slice(0, 5);
+            const activeBatches = (batches || [])
+                .filter(b => !['pickedUp', 'cancelled'].includes(b.status))
+                .sort((a, b) => {
+                    const aTime = new Date(a.createdAt || a.created_at || 0).getTime();
+                    const bTime = new Date(b.createdAt || b.created_at || 0).getTime();
+                    return bTime - aTime;
+                })
+                .slice(0, 5);
             const getStatusBadge = (status) => {
                 const colors = {
                     booked: 'bg-sky-100 text-sky-800 border-sky-200',

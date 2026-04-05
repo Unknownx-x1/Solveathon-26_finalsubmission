@@ -109,6 +109,7 @@ async function loadBookings() {
                                 b.status === 'washed' ? 'Ready' :
                                 'Picked Up'
                              }</span>
+                             ${['booked', 'cancelled'].includes(b.status) ? `<button onclick="deleteBooking(${b.id})" class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100">Delete</button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -153,6 +154,17 @@ async function loadBookings() {
     } finally {
         loader.classList.add('hidden');
     }
+}
+
+async function deleteBooking(id) {
+    if (!confirm('Delete this booking? The student will be able to create a new booking after this.')) return;
+    const res = await fetch('/api/batches/' + encodeURIComponent(id), { method: 'DELETE' });
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        alert(out.error || 'Could not delete booking.');
+        return;
+    }
+    loadBookings();
 }
 
 document.getElementById('filter-date').addEventListener('change', loadBookings);
