@@ -20,3 +20,5 @@ instance/
 # OS / Editor
 .DS_Store
 Thumbs.db
+# Vtop
+vtop
