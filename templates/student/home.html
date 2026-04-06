@@ -31,6 +31,16 @@
                     <p id="usage-text">Loading...</p>
                 </div>
             </div>
+
+            <div id="smart-suggestion" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                <div class="flex items-center justify-between gap-3">
+                    <h3 class="text-sm font-bold text-emerald-900">Smart Suggestion</h3>
+                    <span id="suggest-crowd-pill" class="text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full bg-emerald-200 text-emerald-900"></span>
+                </div>
+                <p class="text-xs text-emerald-700 mt-1">Best time to book</p>
+                <p id="suggest-slot" class="text-lg font-extrabold text-emerald-900 mt-1"></p>
+                <p id="suggest-reason" class="text-xs text-emerald-800 mt-2 leading-relaxed"></p>
+            </div>
             
             <div id="slots-container" class="hidden">
                 <label class="block text-sm font-medium text-gray-700 mb-2">Available Time Slots</label>
@@ -64,6 +74,10 @@
             </div>
         </div>
         <p class="text-[11px] mt-4 text-blue-600 font-medium opacity-80 italic">Note: You can only have one active booking at a time and 4 bookings per month.</p>
+        <div class="mt-4 rounded-lg border border-blue-200 bg-white/70 p-3">
+            <p class="text-xs font-bold uppercase tracking-wide text-blue-700">Smart Suggestion</p>
+            <p class="text-xs text-blue-800 mt-1">Best-slot recommendation will appear after this active booking is completed.</p>
+        </div>
     </div>
 
     <div class="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
@@ -175,6 +189,7 @@
             const dt = new Date();
             const todayStr = dt.getFullYear() + "-" + String(dt.getMonth()+1).padStart(2,'0') + "-" + String(dt.getDate()).padStart(2,'0');
             document.getElementById('date-picker').min = todayStr;
+            document.getElementById('date-picker').value = todayStr;
             
             if (isLimitReached) {
                 document.getElementById('date-picker').disabled = true;
@@ -194,39 +209,87 @@
     const slotsGrid = document.getElementById('slots-grid');
     const bookBtn = document.getElementById('book-btn');
     const bookMsg = document.getElementById('book-msg');
+    const suggestionCard = document.getElementById('smart-suggestion');
+    const suggestSlot = document.getElementById('suggest-slot');
+    const suggestReason = document.getElementById('suggest-reason');
+    const suggestCrowdPill = document.getElementById('suggest-crowd-pill');
+
+    function crowdBadgeClass(level) {
+        if (level === 'low') return 'bg-emerald-100 text-emerald-700 border-emerald-200';
+        if (level === 'high') return 'bg-rose-100 text-rose-700 border-rose-200';
+        return 'bg-amber-100 text-amber-700 border-amber-200';
+    }
+
+    function updateSuggestionCard(suggestion) {
+        if (!suggestion || !suggestion.recommendedSlot) {
+            suggestionCard.classList.remove('hidden');
+            suggestSlot.textContent = 'No slot recommendation available';
+            suggestReason.textContent = suggestion && suggestion.message ? suggestion.message : 'Please pick another date.';
+            suggestCrowdPill.textContent = 'N/A';
+            suggestCrowdPill.className = 'text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full bg-gray-200 text-gray-700';
+            return;
+        }
+
+        suggestionCard.classList.remove('hidden');
+        suggestSlot.textContent = suggestion.recommendedSlot + ' (Least crowded)';
+        suggestReason.textContent = suggestion.explanation || 'Recommended from historical and live usage.';
+        suggestCrowdPill.textContent = (suggestion.crowdLabel || 'Medium crowd');
+        suggestCrowdPill.className = 'text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full border ' + crowdBadgeClass(suggestion.crowdLevel);
+    }
 
     datePicker.addEventListener('change', async function() {
         const dateVal = this.value;
         if (!dateVal) {
             slotsContainer.classList.add('hidden');
             bookBtn.classList.add('hidden');
+            suggestionCard.classList.add('hidden');
             return;
         }
 
         slotsContainer.classList.remove('hidden');
         slotsGrid.innerHTML = '<p class="text-sm text-gray-400 col-span-3 py-4 text-center">Loading slots...</p>';
+        suggestionCard.classList.remove('hidden');
+        suggestSlot.textContent = 'Analyzing booking patterns...';
+        suggestReason.textContent = 'Checking live slot usage and past booking trends.';
+        suggestCrowdPill.textContent = '...';
+        suggestCrowdPill.className = 'text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full bg-gray-200 text-gray-700';
         selectedSlot = null;
         bookBtn.classList.add('hidden');
         bookMsg.textContent = '';
 
         try {
-            const res = await fetch(`/api/slots/available?date=${dateVal}`);
-            const slotsData = await res.json();
+            const [slotsRes, suggestionRes] = await Promise.all([
+                fetch(`/api/slots/available?date=${dateVal}&studentId=${sid}`),
+                fetch(`/api/slots/recommendation?date=${dateVal}&studentId=${sid}`)
+            ]);
+            const slotsData = await slotsRes.json();
+            const suggestionData = suggestionRes.ok ? await suggestionRes.json() : null;
+            updateSuggestionCard(suggestionData);
             
             slotsGrid.innerHTML = '';
+            if (!Array.isArray(slotsData)) {
+                throw new Error('Unexpected slots payload');
+            }
+
             slotsData.forEach(s => {
                 const isFull = s.available <= 0;
+                const crowdText = (s.crowdLabel || 'Medium crowd');
+                const isRecommended = !!s.isRecommended;
                 const btn = document.createElement('button');
                 btn.className = `flex flex-col items-center justify-center p-4 rounded-xl border transition-all duration-200 ` + 
                     (isFull 
                         ? `bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed` 
-                        : `bg-white border-blue-100 text-blue-900 hover:border-blue-400 hover:bg-blue-50/50 slot-btn shadow-sm hover:shadow`);
+                        : `bg-white border-blue-100 text-blue-900 hover:border-blue-400 hover:bg-blue-50/50 slot-btn shadow-sm hover:shadow`) +
+                    (isRecommended && !isFull ? ` ring-2 ring-emerald-200` : ``);
                 
                 btn.disabled = isFull;
                 btn.innerHTML = `
                     <span class="font-bold text-sm mb-1">${s.slot}</span>
-                    <span class="text-[10px] ${isFull ? 'text-red-400 font-bold uppercase' : 'text-gray-400 font-medium'}">
+                    <span class="slot-availability text-[10px] ${isFull ? 'text-red-400 font-bold uppercase' : 'text-gray-400 font-medium'}">
                         ${isFull ? 'Sold Out' : s.available + ' spots left'}
+                    </span>
+                    <span class="mt-2 text-[10px] font-bold uppercase tracking-wide px-2 py-1 rounded-full border ${crowdBadgeClass(s.crowdLevel)}">
+                        ${crowdText}
                     </span>
                 `;
 
@@ -234,15 +297,22 @@
                     btn.addEventListener('click', () => {
                         document.querySelectorAll('.slot-btn').forEach(b => {
                             b.classList.remove('bg-blue-600', 'text-white', 'border-blue-600', 'ring-4', 'ring-blue-100', 'shadow-md');
+                            b.classList.remove('ring-2', 'ring-emerald-200');
                             b.classList.add('bg-white', 'text-blue-900', 'border-blue-100');
-                            b.querySelector('span:last-child').classList.remove('text-blue-100');
-                            b.querySelector('span:last-child').classList.add('text-gray-400');
+                            const availabilityBadge = b.querySelector('.slot-availability');
+                            if (availabilityBadge) {
+                                availabilityBadge.classList.remove('text-blue-100');
+                                availabilityBadge.classList.add('text-gray-400');
+                            }
                         });
                         
                         btn.classList.add('bg-blue-600', 'text-white', 'border-blue-600', 'ring-4', 'ring-blue-100', 'shadow-md');
                         btn.classList.remove('bg-white', 'text-blue-900', 'border-blue-100');
-                        btn.querySelector('span:last-child').classList.add('text-blue-100');
-                        btn.querySelector('span:last-child').classList.remove('text-gray-400');
+                        const selectedAvailability = btn.querySelector('.slot-availability');
+                        if (selectedAvailability) {
+                            selectedAvailability.classList.add('text-blue-100');
+                            selectedAvailability.classList.remove('text-gray-400');
+                        }
                         
                         selectedSlot = s.slot;
                         bookBtn.classList.remove('hidden');
@@ -253,8 +323,14 @@
             });
         } catch (err) {
             slotsGrid.innerHTML = '<p class="text-sm text-red-500 col-span-3 py-4 text-center">Failed to load slots.</p>';
+            suggestionCard.classList.add('hidden');
         }
     });
+
+    // Trigger initial recommendation load after listener is attached.
+    if (datePicker && datePicker.value && !datePicker.disabled) {
+        datePicker.dispatchEvent(new Event('change'));
+    }
 
     bookBtn.addEventListener('click', async function() {
         if (!selectedSlot || !datePicker.value) return;

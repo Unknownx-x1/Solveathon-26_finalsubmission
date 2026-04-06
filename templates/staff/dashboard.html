@@ -41,6 +41,43 @@
         <div class="animate-pulse bg-white p-4 border border-gray-200 rounded-lg h-24"></div>
     </div>
 
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <div class="flex items-center justify-between mb-4">
+            <div>
+                <h2 class="text-lg font-semibold text-gray-900">Admin Analytics</h2>
+                <p id="analytics-range" class="text-xs text-gray-500 mt-1">Loading analytics...</p>
+            </div>
+            <span class="text-[11px] text-gray-500">Rolling window</span>
+        </div>
+        <div id="analytics-summary" class="grid grid-cols-2 md:grid-cols-5 gap-3"></div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mt-5">
+            <div class="rounded-lg border border-gray-100 p-4">
+                <h3 class="text-sm font-bold text-gray-800 mb-3">Booking Trend</h3>
+                <div id="analytics-trend" class="space-y-2"></div>
+            </div>
+            <div class="rounded-lg border border-gray-100 p-4">
+                <h3 class="text-sm font-bold text-gray-800 mb-3">Slot Utilization</h3>
+                <div id="analytics-slots" class="space-y-2"></div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 mt-5">
+            <div class="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
+                <h3 class="text-sm font-bold text-emerald-900 mb-2">Best Windows</h3>
+                <div id="analytics-best" class="space-y-2 text-sm"></div>
+            </div>
+            <div class="rounded-lg border border-rose-100 bg-rose-50 p-4">
+                <h3 class="text-sm font-bold text-rose-900 mb-2">Busiest Windows</h3>
+                <div id="analytics-busiest" class="space-y-2 text-sm"></div>
+            </div>
+            <div class="rounded-lg border border-amber-100 bg-amber-50 p-4">
+                <h3 class="text-sm font-bold text-amber-900 mb-2">Crowd Mix</h3>
+                <div id="analytics-crowd" class="space-y-2 text-sm"></div>
+            </div>
+        </div>
+    </div>
+
     <div>
         <div class="flex items-center justify-between mb-4">
             <h2 class="text-lg font-semibold text-gray-900">Recent Active Batches</h2>
@@ -89,16 +126,110 @@
     renderCurrentDate();
     window.addEventListener('portal-language-changed', renderCurrentDate);
 
+    function shortDateLabel(dateStr) {
+        const dt = new Date(dateStr + 'T00:00:00');
+        if (Number.isNaN(dt.getTime())) return dateStr;
+        return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
+    function renderAnalytics(analytics) {
+        if (!analytics || !analytics.range) {
+            return;
+        }
+        const range = analytics.range;
+        const summary = analytics.summary || {};
+        const crowd = analytics.crowdDistribution || {};
+        const trend = analytics.trend || [];
+        const slotAnalytics = analytics.slotAnalytics || [];
+        const bestWindows = analytics.bestWindows || [];
+        const busiestWindows = analytics.busiestWindows || [];
+
+        document.getElementById('analytics-range').textContent =
+            `${range.startDate} to ${range.endDate} (${range.days} days)`;
+
+        const summaryEl = document.getElementById('analytics-summary');
+        summaryEl.innerHTML = `
+            <div class="rounded-lg border border-gray-200 p-3"><p class="text-[10px] uppercase font-bold text-gray-500">Total Bookings</p><p class="text-xl font-bold text-gray-900">${summary.totalBookings || 0}</p></div>
+            <div class="rounded-lg border border-gray-200 p-3"><p class="text-[10px] uppercase font-bold text-gray-500">Avg / Day</p><p class="text-xl font-bold text-blue-700">${summary.averagePerDay || 0}</p></div>
+            <div class="rounded-lg border border-gray-200 p-3"><p class="text-[10px] uppercase font-bold text-gray-500">Peak Day</p><p class="text-xl font-bold text-rose-700">${summary.peakDayBookings || 0}</p></div>
+            <div class="rounded-lg border border-gray-200 p-3"><p class="text-[10px] uppercase font-bold text-gray-500">Low Day</p><p class="text-xl font-bold text-emerald-700">${summary.lowDayBookings || 0}</p></div>
+            <div class="rounded-lg border border-gray-200 p-3"><p class="text-[10px] uppercase font-bold text-gray-500">Evening Peak Days</p><p class="text-xl font-bold text-amber-700">${summary.peakHourDays || 0}</p></div>
+        `;
+
+        const maxTrendValue = trend.length ? Math.max(...trend.map((t) => t.bookings || 0), 1) : 1;
+        const trendEl = document.getElementById('analytics-trend');
+        trendEl.innerHTML = trend.map((point) => {
+            const value = point.bookings || 0;
+            const width = Math.max(3, Math.round((value / maxTrendValue) * 100));
+            return `
+                <div>
+                    <div class="flex items-center justify-between text-[11px] mb-1">
+                        <span class="font-medium text-gray-700">${shortDateLabel(point.date)}</span>
+                        <span class="font-bold text-gray-800">${value}</span>
+                    </div>
+                    <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <div class="h-full bg-blue-500 rounded-full" style="width:${width}%"></div>
+                    </div>
+                </div>
+            `;
+        }).join('') || '<p class="text-sm text-gray-500">No trend data available.</p>';
+
+        const maxSlotValue = slotAnalytics.length ? Math.max(...slotAnalytics.map((s) => s.avgBookingsPerDay || 0), 1) : 1;
+        const slotsEl = document.getElementById('analytics-slots');
+        slotsEl.innerHTML = slotAnalytics.map((slot) => {
+            const v = slot.avgBookingsPerDay || 0;
+            const width = Math.max(3, Math.round((v / maxSlotValue) * 100));
+            return `
+                <div>
+                    <div class="flex items-center justify-between text-[11px] mb-1">
+                        <span class="font-medium text-gray-700">${slot.slot}</span>
+                        <span class="font-bold text-gray-800">${slot.avgUtilizationPercent}%</span>
+                    </div>
+                    <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
+                        <div class="h-full bg-indigo-500 rounded-full" style="width:${width}%"></div>
+                    </div>
+                </div>
+            `;
+        }).join('') || '<p class="text-sm text-gray-500">No slot utilization data available.</p>';
+
+        const bestEl = document.getElementById('analytics-best');
+        bestEl.innerHTML = bestWindows.map((item) => `
+            <div class="flex items-center justify-between">
+                <span class="font-medium text-emerald-900">${item.slot}</span>
+                <span class="text-emerald-800 font-bold">${item.avgBookingsPerDay}/day</span>
+            </div>
+        `).join('') || '<p class="text-emerald-700">No data.</p>';
+
+        const busiestEl = document.getElementById('analytics-busiest');
+        busiestEl.innerHTML = busiestWindows.map((item) => `
+            <div class="flex items-center justify-between">
+                <span class="font-medium text-rose-900">${item.slot}</span>
+                <span class="text-rose-800 font-bold">${item.avgBookingsPerDay}/day</span>
+            </div>
+        `).join('') || '<p class="text-rose-700">No data.</p>';
+
+        const crowdTotal = (crowd.low || 0) + (crowd.medium || 0) + (crowd.high || 0);
+        const crowdEl = document.getElementById('analytics-crowd');
+        crowdEl.innerHTML = `
+            <div class="flex items-center justify-between"><span class="font-medium text-emerald-900">Low crowd</span><span class="font-bold text-emerald-800">${crowd.low || 0}</span></div>
+            <div class="flex items-center justify-between"><span class="font-medium text-amber-900">Medium crowd</span><span class="font-bold text-amber-800">${crowd.medium || 0}</span></div>
+            <div class="flex items-center justify-between"><span class="font-medium text-rose-900">High crowd</span><span class="font-bold text-rose-800">${crowd.high || 0}</span></div>
+            <p class="text-[11px] text-amber-700 mt-2">Measured across ${crowdTotal} slot-day combinations.</p>
+        `;
+    }
+
     async function loadDashboard() {
         try {
-            const [summaryRes, batchesRes, urgentRes] = await Promise.all([
+            const [summaryRes, batchesRes, urgentRes, analyticsRes] = await Promise.all([
                 fetch('/api/dashboard/summary'),
                 fetch('/api/batches'),
-                fetch('/api/urgent-alerts?audience=staff')
+                fetch('/api/urgent-alerts?audience=staff'),
+                fetch('/api/dashboard/analytics?days=14')
             ]);
             const summary = await summaryRes.json();
             const batches = await batchesRes.json();
             const urgentAlerts = urgentRes.ok ? await urgentRes.json() : [];
+            const analytics = analyticsRes.ok ? await analyticsRes.json() : null;
 
             const scheduledByDate = {};
             (batches || []).forEach((batch) => {
@@ -154,6 +285,7 @@
                     <p class="text-2xl font-bold text-slate-700">${summary.completedToday}</p>
                 </div>
             `;
+            renderAnalytics(analytics);
 
             const today = new Date().toISOString().split('T')[0];
             const todayBookings = scheduledByDate[today] || [];

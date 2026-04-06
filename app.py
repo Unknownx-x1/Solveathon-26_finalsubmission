@@ -204,6 +204,8 @@ AVAILABLE_SLOTS = [
 MAX_PER_SLOT = 25
 MONTHLY_SLOT_LIMIT = 4
 MISSED_SLOT_LOOKAHEAD_DAYS = 21
+SLOT_HISTORY_LOOKBACK_DAYS = 28
+SLOT_RECENT_TREND_DAYS = 7
 PERSONAL_ANNOUNCEMENT_ELIGIBLE_STATUSES = {'collected', 'washing', 'washed'}
 
 def _is_staff_logged_in():
@@ -276,7 +278,209 @@ def _create_slot_added_announcement(batch, previous_date, previous_slot):
     )
 
 def _count_bookings_for_slot(date_value, time_slot):
-    return LaundryBatch.query.filter_by(scheduled_date=date_value, time_slot=time_slot).count()
+    return LaundryBatch.query.filter(
+        LaundryBatch.scheduled_date == date_value,
+        LaundryBatch.time_slot == time_slot,
+        LaundryBatch.status != 'cancelled'
+    ).count()
+
+def _parse_booking_date(date_value):
+    if not date_value:
+        return None
+    try:
+        return datetime.strptime(date_value, '%Y-%m-%d').date()
+    except ValueError:
+        return None
+
+def _slot_end_time(slot_value):
+    try:
+        end_str = str(slot_value).split(' - ')[1]
+        return datetime.strptime(end_str, '%H:%M').time()
+    except Exception:
+        return None
+
+def _is_slot_bookable_for_date(date_obj, slot_value):
+    if not date_obj:
+        return False
+    now = datetime.now()
+    today = now.date()
+    if date_obj < today:
+        return False
+    if date_obj > today:
+        return True
+    slot_end = _slot_end_time(slot_value)
+    if not slot_end:
+        return False
+    return now.time() <= slot_end
+
+def _slot_crowd_classification(projected_load):
+    ratio = 0 if MAX_PER_SLOT <= 0 else float(projected_load) / float(MAX_PER_SLOT)
+    if ratio < 0.34:
+        return {"level": "low", "label": "Low crowd", "color": "green"}
+    if ratio < 0.67:
+        return {"level": "medium", "label": "Medium crowd", "color": "yellow"}
+    return {"level": "high", "label": "High crowd", "color": "red"}
+
+def _date_range(start_date, end_date):
+    if not start_date or not end_date or start_date > end_date:
+        return []
+    dates = []
+    cursor = start_date
+    while cursor <= end_date:
+        dates.append(cursor)
+        cursor = cursor + timedelta(days=1)
+    return dates
+
+def _slot_counts_between(start_date, end_date):
+    date_points = _date_range(start_date, end_date)
+    counts_by_date = {d.strftime('%Y-%m-%d'): {slot: 0 for slot in AVAILABLE_SLOTS} for d in date_points}
+    if not date_points:
+        return counts_by_date
+
+    rows = LaundryBatch.query.filter(
+        LaundryBatch.scheduled_date >= start_date.strftime('%Y-%m-%d'),
+        LaundryBatch.scheduled_date <= end_date.strftime('%Y-%m-%d'),
+        LaundryBatch.status != 'cancelled'
+    ).all()
+
+    for row in rows:
+        if row.time_slot not in AVAILABLE_SLOTS:
+            continue
+        if row.scheduled_date not in counts_by_date:
+            continue
+        counts_by_date[row.scheduled_date][row.time_slot] += 1
+    return counts_by_date
+
+def _average_slot_usage(start_date, end_date):
+    counts_by_date = _slot_counts_between(start_date, end_date)
+    day_count = len(counts_by_date)
+    averages = {slot: 0.0 for slot in AVAILABLE_SLOTS}
+    if day_count == 0:
+        return averages
+
+    for slot in AVAILABLE_SLOTS:
+        total = sum(day_counts.get(slot, 0) for day_counts in counts_by_date.values())
+        averages[slot] = round(float(total) / float(day_count), 2)
+    return averages
+
+def _student_slot_preferences(student_id, target_date):
+    if not student_id or not target_date:
+        return {slot: 0 for slot in AVAILABLE_SLOTS}
+    try:
+        student_id = int(student_id)
+    except (TypeError, ValueError):
+        return {slot: 0 for slot in AVAILABLE_SLOTS}
+    lookback_start = (target_date - timedelta(days=60)).strftime('%Y-%m-%d')
+    lookback_end = target_date.strftime('%Y-%m-%d')
+    rows = LaundryBatch.query.filter(
+        LaundryBatch.student_id == student_id,
+        LaundryBatch.scheduled_date >= lookback_start,
+        LaundryBatch.scheduled_date <= lookback_end,
+        LaundryBatch.status != 'cancelled'
+    ).all()
+    preferences = {slot: 0 for slot in AVAILABLE_SLOTS}
+    for row in rows:
+        if row.time_slot in preferences:
+            preferences[row.time_slot] += 1
+    return preferences
+
+def _build_slot_recommendation(date_value, student_id=None):
+    target_date = _parse_booking_date(date_value)
+    if not target_date:
+        return None
+
+    current_counts = {slot: 0 for slot in AVAILABLE_SLOTS}
+    current_rows = LaundryBatch.query.filter(
+        LaundryBatch.scheduled_date == date_value,
+        LaundryBatch.status != 'cancelled'
+    ).all()
+    for row in current_rows:
+        if row.time_slot in current_counts:
+            current_counts[row.time_slot] += 1
+
+    historical_start = target_date - timedelta(days=SLOT_HISTORY_LOOKBACK_DAYS)
+    historical_end = target_date - timedelta(days=1)
+    recent_start = target_date - timedelta(days=SLOT_RECENT_TREND_DAYS)
+    recent_end = target_date - timedelta(days=1)
+
+    historical_avg = _average_slot_usage(historical_start, historical_end)
+    recent_avg = _average_slot_usage(recent_start, recent_end)
+    student_preferences = _student_slot_preferences(student_id, target_date)
+
+    historic_values = [historical_avg[s] for s in AVAILABLE_SLOTS]
+    overall_historic_mean = (sum(historic_values) / len(historic_values)) if historic_values else 0
+    peak_slots = {
+        slot for slot in AVAILABLE_SLOTS
+        if historical_avg[slot] > (overall_historic_mean * 1.1)
+    }
+
+    slot_insights = []
+    for slot in AVAILABLE_SLOTS:
+        if not _is_slot_bookable_for_date(target_date, slot):
+            continue
+
+        current_count = current_counts[slot]
+        if current_count >= MAX_PER_SLOT:
+            projected = float(MAX_PER_SLOT)
+        else:
+            projected = (
+                (0.60 * float(current_count)) +
+                (0.25 * float(historical_avg[slot])) +
+                (0.15 * float(recent_avg[slot]))
+            )
+            if slot in peak_slots:
+                projected += 0.75
+            projected = min(float(MAX_PER_SLOT), round(projected, 2))
+
+        crowd = _slot_crowd_classification(projected)
+        preference_bonus = min(float(student_preferences.get(slot, 0)), 3.0) * 0.10
+
+        score = projected - preference_bonus + (AVAILABLE_SLOTS.index(slot) * 0.01)
+        slot_insights.append({
+            "slot": slot,
+            "currentBookings": current_count,
+            "available": max(0, MAX_PER_SLOT - current_count),
+            "historicalAverage": historical_avg[slot],
+            "recentTrendAverage": recent_avg[slot],
+            "projectedLoad": projected,
+            "isPeakHour": slot in peak_slots,
+            "crowdLevel": crowd["level"],
+            "crowdLabel": crowd["label"],
+            "crowdColor": crowd["color"],
+            "score": round(score, 3)
+        })
+
+    if not slot_insights:
+        return {
+            "date": date_value,
+            "recommendedSlot": None,
+            "message": "No bookable slots available for this date.",
+            "slotInsights": []
+        }
+
+    ordered = sorted(slot_insights, key=lambda item: (item["score"], item["projectedLoad"], item["slot"]))
+    best = ordered[0]
+
+    reason_parts = [
+        f"Current load {best['currentBookings']}/{MAX_PER_SLOT}",
+        f"past average {best['historicalAverage']:.1f}",
+        f"recent 7-day trend {best['recentTrendAverage']:.1f}"
+    ]
+    if best["isPeakHour"]:
+        reason_parts.append("usually a peak-hour slot")
+    explanation = "Least crowded after combining live availability and usage history: " + ", ".join(reason_parts) + "."
+
+    return {
+        "date": date_value,
+        "recommendedSlot": best["slot"],
+        "crowdLevel": best["crowdLevel"],
+        "crowdLabel": best["crowdLabel"],
+        "crowdColor": best["crowdColor"],
+        "projectedLoad": best["projectedLoad"],
+        "explanation": explanation,
+        "slotInsights": ordered,
+        "alternatives": [item["slot"] for item in ordered[1:3]]
+    }
 
 def _find_best_reassignment_slot():
     start_date = datetime.now().date()
@@ -996,21 +1200,121 @@ def get_dashboard_summary():
 def get_stats_alias():
     return get_dashboard_summary()
 
+@app.route('/api/dashboard/analytics', methods=['GET'])
+def get_dashboard_analytics():
+    _process_missed_bookings()
+    days_param = request.args.get('days')
+    try:
+        days = int(days_param) if days_param else 14
+    except ValueError:
+        days = 14
+    days = min(max(days, 3), 60)
+
+    today = datetime.now().date()
+    start_date = today - timedelta(days=days - 1)
+    start_str = start_date.strftime('%Y-%m-%d')
+    end_str = today.strftime('%Y-%m-%d')
+
+    relevant_batches = LaundryBatch.query.filter(
+        LaundryBatch.scheduled_date >= start_str,
+        LaundryBatch.scheduled_date <= end_str,
+        LaundryBatch.time_slot.isnot(None),
+        LaundryBatch.status != 'cancelled'
+    ).all()
+
+    counts_by_date = {
+        (start_date + timedelta(days=offset)).strftime('%Y-%m-%d'): {slot: 0 for slot in AVAILABLE_SLOTS}
+        for offset in range(days)
+    }
+    slot_totals = {slot: 0 for slot in AVAILABLE_SLOTS}
+    booked_status_counts = {}
+    peak_hour_days = 0
+
+    for batch in relevant_batches:
+        date_key = batch.scheduled_date
+        slot_key = batch.time_slot
+        if date_key not in counts_by_date or slot_key not in slot_totals:
+            continue
+        counts_by_date[date_key][slot_key] += 1
+        slot_totals[slot_key] += 1
+        status_key = batch.status or 'unknown'
+        booked_status_counts[status_key] = booked_status_counts.get(status_key, 0) + 1
+
+    trend = []
+    crowd_distribution = {"low": 0, "medium": 0, "high": 0}
+    for date_key, per_slot_counts in counts_by_date.items():
+        daily_total = sum(per_slot_counts.values())
+        trend.append({"date": date_key, "bookings": daily_total})
+        if (per_slot_counts.get("18:00 - 19:00", 0) + per_slot_counts.get("19:00 - 20:00", 0)) >= 6:
+            peak_hour_days += 1
+        for slot in AVAILABLE_SLOTS:
+            crowd_level = _slot_crowd_classification(per_slot_counts.get(slot, 0)).get("level", "medium")
+            crowd_distribution[crowd_level] = crowd_distribution.get(crowd_level, 0) + 1
+
+    slot_analytics = []
+    for slot in AVAILABLE_SLOTS:
+        avg_bookings = round(float(slot_totals[slot]) / float(days), 2)
+        utilization = round((avg_bookings / float(MAX_PER_SLOT)) * 100, 1) if MAX_PER_SLOT > 0 else 0.0
+        slot_analytics.append({
+            "slot": slot,
+            "totalBookings": slot_totals[slot],
+            "avgBookingsPerDay": avg_bookings,
+            "avgUtilizationPercent": utilization
+        })
+    slot_analytics.sort(key=lambda x: x["avgBookingsPerDay"], reverse=True)
+
+    best_windows = sorted(slot_analytics, key=lambda x: (x["avgBookingsPerDay"], x["slot"]))[:3]
+    busiest_windows = sorted(slot_analytics, key=lambda x: (-x["avgBookingsPerDay"], x["slot"]))[:3]
+
+    total_bookings = sum(item["bookings"] for item in trend)
+    avg_per_day = round(float(total_bookings) / float(days), 2) if days > 0 else 0.0
+    trend_values = [item["bookings"] for item in trend]
+
+    return jsonify({
+        "range": {
+            "days": days,
+            "startDate": start_str,
+            "endDate": end_str
+        },
+        "summary": {
+            "totalBookings": total_bookings,
+            "averagePerDay": avg_per_day,
+            "peakDayBookings": max(trend_values) if trend_values else 0,
+            "lowDayBookings": min(trend_values) if trend_values else 0,
+            "peakHourDays": peak_hour_days
+        },
+        "trend": trend,
+        "slotAnalytics": slot_analytics,
+        "crowdDistribution": crowd_distribution,
+        "bestWindows": best_windows,
+        "busiestWindows": busiest_windows,
+        "statusBreakdown": booked_status_counts
+    })
+
 @app.route('/api/slots/available', methods=['GET'])
 def get_available_slots():
     _process_missed_bookings()
     date_val = request.args.get('date')
+    student_id = request.args.get('studentId')
     if not date_val:
         return jsonify({"error": "Date is required"}), 400
     
     # Get all bookings for this date
-    batches = LaundryBatch.query.filter_by(scheduled_date=date_val).all()
+    batches = LaundryBatch.query.filter(
+        LaundryBatch.scheduled_date == date_val,
+        LaundryBatch.status != 'cancelled'
+    ).all()
     
     # Count them
     counts = {slot: 0 for slot in AVAILABLE_SLOTS}
     for b in batches:
         if b.time_slot in counts:
             counts[b.time_slot] += 1
+
+    recommendation = _build_slot_recommendation(date_val, student_id=student_id)
+    slot_insight_map = {}
+    if recommendation:
+        slot_insight_map = {item["slot"]: item for item in recommendation.get("slotInsights", [])}
     
     slots_info = []
     try:
@@ -1035,12 +1339,33 @@ def get_available_slots():
                 "slot": slot,
                 "booked": counts[slot],
                 "available": MAX_PER_SLOT - counts[slot],
-                "total": MAX_PER_SLOT
+                "total": MAX_PER_SLOT,
+                "crowdLevel": slot_insight_map.get(slot, {}).get("crowdLevel", "medium"),
+                "crowdLabel": slot_insight_map.get(slot, {}).get("crowdLabel", "Medium crowd"),
+                "crowdColor": slot_insight_map.get(slot, {}).get("crowdColor", "yellow"),
+                "projectedLoad": slot_insight_map.get(slot, {}).get("projectedLoad", counts[slot]),
+                "historicalAverage": slot_insight_map.get(slot, {}).get("historicalAverage", 0),
+                "recentTrendAverage": slot_insight_map.get(slot, {}).get("recentTrendAverage", 0),
+                "isPeakHour": slot_insight_map.get(slot, {}).get("isPeakHour", False),
+                "isRecommended": recommendation is not None and slot == recommendation.get("recommendedSlot")
             })
     except ValueError:
         pass
     
     return jsonify(slots_info)
+
+@app.route('/api/slots/recommendation', methods=['GET'])
+def get_slot_recommendation():
+    _process_missed_bookings()
+    date_val = request.args.get('date')
+    student_id = request.args.get('studentId')
+    if not date_val:
+        return jsonify({"error": "Date is required"}), 400
+
+    suggestion = _build_slot_recommendation(date_val, student_id=student_id)
+    if suggestion is None:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD."}), 400
+    return jsonify(suggestion)
 
 @app.route('/api/daily-loads', methods=['GET'])
 def get_daily_loads():
@@ -1652,8 +1977,10 @@ def create_booking():
     db.session.flush()
     _create_notification(student.id, batch.id, "booked")
     db.session.commit()
-    
-    return jsonify(batch_schema.dump(batch)), 201
+
+    payload = batch_schema.dump(batch)
+    payload["smartSuggestion"] = _build_slot_recommendation(date_val, student_id=student.id)
+    return jsonify(payload), 201
 
 @app.route('/api/batches/create-by-own-token', methods=['POST'])
 def create_batch_by_own_token():
